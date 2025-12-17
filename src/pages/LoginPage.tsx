@@ -25,7 +25,8 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
       return;
     }
 
-    // Simple authentication (for demo purposes)
+    // DEMO: Simple authentication (replace with proper auth in production)
+    // TODO: Implement proper authentication with backend validation
     const teacher: Teacher = {
       id: Date.now().toString(),
       name: email.split('@')[0],

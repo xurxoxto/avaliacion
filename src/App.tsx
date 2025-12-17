@@ -25,7 +25,6 @@ function App() {
   };
 
   const handleLogout = () => {
-    storage.saveTeacher({} as Teacher);
     setTeacher(null);
   };
 

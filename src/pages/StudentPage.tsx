@@ -47,7 +47,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
     }
 
     const newEvaluation: EvaluationEntry = {
-      id: Date.now().toString(),
+      id: `eval-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       studentId: student.id,
       competenciaId: selectedCompetencia,
       rating,
