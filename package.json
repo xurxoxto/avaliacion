@@ -1,0 +1,14 @@
+{
+  "name": "libro-clase-mac",
+  "version": "1.0.0",
+  "description": "Sistema para profesores en Mac",
+  "main": "public/index.html",
+  "scripts": {
+    "start": "open public/index.html",
+    "dev": "npx serve public",
+    "test": "echo '¡Todo funciona! 🍎'"
+  },
+  "keywords": ["educación", "mac", "profesores"],
+  "author": "Tu Nombre",
+  "license": "MIT"
+}
