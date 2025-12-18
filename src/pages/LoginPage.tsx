@@ -1,40 +1,89 @@
 import { useState } from 'react';
 import { Mail, Lock } from 'lucide-react';
 import { Teacher } from '../types';
+import { auth } from '../config/firebase';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 
 interface LoginPageProps {
   onLogin: (teacher: Teacher) => void;
+  externalError?: string;
 }
 
-export default function LoginPage({ onLogin }: LoginPageProps) {
+export default function LoginPage({ onLogin, externalError }: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [mode, setMode] = useState<'login' | 'signup'>('login');
+  const [loading, setLoading] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
+    setLoading(true);
 
     if (!email || !email.includes('@')) {
       setError('Por favor, introduce un email válido');
+      setLoading(false);
+      return;
+    }
+
+    // Domain restriction (matches Firestore rules)
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail.endsWith('@edu.xunta.gal')) {
+      setError('Solo se permiten cuentas @edu.xunta.gal');
+      setLoading(false);
       return;
     }
 
     if (!password) {
       setError('Por favor, introduce una contraseña');
+      setLoading(false);
       return;
     }
 
-    // DEMO: Simple authentication (replace with proper auth in production)
-    // TODO: Implement proper authentication with backend validation
-    const teacher: Teacher = {
-      id: Date.now().toString(),
-      name: email.split('@')[0],
-      email,
-      classroomIds: [],
-    };
+    try {
+      let userCredential;
+      if (mode === 'signup') {
+        userCredential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+      } else {
+        userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+      }
 
-    onLogin(teacher);
+      const user = userCredential.user;
+      const userEmail = (user.email || normalizedEmail).toLowerCase();
+      const domain = userEmail.split('@')[1] || userEmail;
+      const workspaceId = domain;
+
+      const teacher: Teacher = {
+        id: user.uid,
+        name: userEmail.split('@')[0],
+        email: userEmail,
+        workspaceId,
+        classroomIds: [],
+      };
+
+      onLogin(teacher);
+    } catch (err: any) {
+      const code = err?.code as string | undefined;
+      if (code === 'auth/invalid-credential') setError('Credenciales incorrectas');
+      else if (code === 'auth/user-not-found') setError('Usuario no encontrado');
+      else if (code === 'auth/wrong-password') setError('Contraseña incorrecta');
+      else if (code === 'auth/email-already-in-use') setError('Ese email ya está registrado');
+      else if (code === 'auth/weak-password') setError('La contraseña es demasiado débil');
+      else if (code === 'auth/network-request-failed') setError('Error de red. Revisa tu conexión.');
+      else if (code === 'auth/operation-not-allowed') {
+        setError('En Firebase: habilita Email/Password en Authentication → Sign-in method.');
+      }
+      else if (code === 'auth/unauthorized-domain') {
+        setError('Dominio no autorizado en Firebase Auth. Añade este dominio en Authentication → Settings → Authorized domains.');
+      }
+      else if (code === 'auth/too-many-requests') {
+        setError('Demasiados intentos. Espera un momento y vuelve a intentarlo.');
+      }
+      else setError('No se pudo iniciar sesión');
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -47,6 +96,12 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             </h1>
             <p className="text-gray-600">CEIP Galicia - Portal del Profesor</p>
           </div>
+
+          {externalError && (
+            <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-lg text-sm mb-4">
+              {externalError}
+            </div>
+          )}
 
           <form onSubmit={handleSubmit} className="space-y-6">
             <div>
@@ -92,9 +147,23 @@ export default function LoginPage({ onLogin }: LoginPageProps) {
             )}
 
             <button type="submit" className="btn-primary w-full py-3 text-lg">
-              Iniciar Sesión
+              {loading ? 'Cargando...' : (mode === 'signup' ? 'Crear cuenta' : 'Iniciar Sesión')}
             </button>
           </form>
+
+          <div className="mt-4 text-center">
+            <button
+              type="button"
+              className="text-sm text-primary-700 hover:text-primary-800 font-medium"
+              onClick={() => {
+                setError('');
+                setMode(m => (m === 'login' ? 'signup' : 'login'));
+              }}
+              disabled={loading}
+            >
+              {mode === 'login' ? '¿No tienes cuenta? Crear una' : '¿Ya tienes cuenta? Iniciar sesión'}
+            </button>
+          </div>
 
           <p className="mt-6 text-center text-sm text-gray-600">
             Sistema compatible con Decreto 155/2021

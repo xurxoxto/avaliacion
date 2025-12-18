@@ -1,11 +1,14 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Search, User } from 'lucide-react';
+import { ArrowLeft, Plus, Search, User, Trash2 } from 'lucide-react';
 import { Teacher, Classroom, Student } from '../types';
 import { storage } from '../utils/storage';
+import { useRemoteRefresh } from '../utils/useRemoteRefresh';
 import Header from '../components/Header';
 import StudentCard from '../components/StudentCard';
 import CreateStudentModal from '../components/CreateStudentModal';
+import { deleteGradesForStudents } from '../utils/firestore/grades';
+import { deleteTriangulationObservationsForStudents } from '../utils/firestore/triangulationObservations';
 
 interface ClassroomPageProps {
   teacher: Teacher;
@@ -27,6 +30,13 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
       loadStudents(id);
     }
   }, [id]);
+
+  useRemoteRefresh(() => {
+    if (id) {
+      loadClassroom(id);
+      loadStudents(id);
+    }
+  });
 
   useEffect(() => {
     filterStudents();
@@ -83,6 +93,40 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     }
   };
 
+  const handleDeleteClassroom = () => {
+    if (!classroom || !id) return;
+    const ok = confirm(`Eliminar el aula "${classroom.name}" y todos sus estudiantes? Esta acción no se puede deshacer.`);
+    if (!ok) return;
+
+    // Remove classroom
+    const updatedClassrooms = storage.getClassrooms().filter(c => c.id !== id);
+    storage.saveClassrooms(updatedClassrooms);
+
+    // Remove students in classroom
+    const allStudents = storage.getStudents();
+    const remainingStudents = allStudents.filter(s => s.classroomId !== id);
+    storage.saveStudents(remainingStudents);
+
+    // Remove triangulation grades (Firestore)
+    const removedStudentIdsList = allStudents.filter(s => s.classroomId === id).map(s => s.id);
+    if (teacher.workspaceId && removedStudentIdsList.length > 0) {
+      deleteGradesForStudents(teacher.workspaceId, removedStudentIdsList).catch(() => {
+        // Continue local delete even if remote delete fails
+      });
+
+      deleteTriangulationObservationsForStudents(teacher.workspaceId, removedStudentIdsList).catch(() => {
+        // Continue local delete even if remote delete fails
+      });
+    }
+
+    // Remove evaluations that belong to removed students
+    const removedStudentIds = new Set(removedStudentIdsList);
+    const remainingEvaluations = storage.getEvaluations().filter(e => !removedStudentIds.has(e.studentId));
+    storage.saveEvaluations(remainingEvaluations);
+
+    navigate('/');
+  };
+
   if (!classroom) {
     return (
       <div className="min-h-screen bg-gray-50">
@@ -98,10 +142,10 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     <div className="min-h-screen bg-gray-50">
       <Header teacher={teacher} onLogout={onLogout} />
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
         <button
           onClick={() => navigate('/')}
-          className="btn-secondary flex items-center gap-2 mb-6"
+          className="btn-secondary flex items-center justify-center gap-2 mb-6 w-full sm:w-auto"
         >
           <ArrowLeft className="w-5 h-5" />
           Volver al Dashboard
@@ -109,18 +153,28 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
 
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">{classroom.name}</h1>
+            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">{classroom.name}</h1>
             <p className="text-gray-600 mt-2">
               {classroom.grade} • {students.length} {students.length === 1 ? 'estudiante' : 'estudiantes'}
             </p>
           </div>
-          <button
-            onClick={() => setShowCreateModal(true)}
-            className="btn-primary flex items-center gap-2"
-          >
-            <Plus className="w-5 h-5" />
-            Añadir Estudiante
-          </button>
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+            <button
+              onClick={handleDeleteClassroom}
+              className="btn-secondary flex items-center justify-center gap-2"
+              title="Eliminar aula"
+            >
+              <Trash2 className="w-5 h-5" />
+              Eliminar Aula
+            </button>
+            <button
+              onClick={() => setShowCreateModal(true)}
+              className="btn-primary flex items-center justify-center gap-2"
+            >
+              <Plus className="w-5 h-5" />
+              Añadir Estudiante
+            </button>
+          </div>
         </div>
 
         <div className="mb-6">
@@ -158,7 +212,7 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
             {filteredStudents.map((student) => (
               <StudentCard
                 key={student.id}

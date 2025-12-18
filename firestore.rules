@@ -1,0 +1,39 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function email() {
+      return request.auth.token.email;
+    }
+
+    // Restrict collaboration to a single, known domain.
+    function allowedWorkspaceId(workspaceId) {
+      return workspaceId == 'edu.xunta.gal';
+    }
+
+    // Workspace doc id is the email domain (here: "edu.xunta.gal")
+    function inWorkspace(workspaceId) {
+      return isSignedIn()
+        && email() != null
+        && allowedWorkspaceId(workspaceId)
+        && email().matches('.*@edu\\.xunta\\.gal$');
+    }
+
+    match /workspaces/{workspaceId} {
+      allow read, write: if inWorkspace(workspaceId);
+
+      // Subcollections (Option B)
+      match /{document=**} {
+        allow read, write: if inWorkspace(workspaceId);
+      }
+    }
+
+    // Optional per-teacher docs (future)
+    match /teachers/{uid} {
+      allow read, write: if isSignedIn() && request.auth.uid == uid;
+    }
+  }
+}

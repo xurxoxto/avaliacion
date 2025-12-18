@@ -15,20 +15,20 @@ export default function Header({ teacher, onLogout }: HeaderProps) {
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex items-center justify-between h-16">
           <div 
-            className="flex items-center gap-3 cursor-pointer"
+            className="flex items-center gap-3 cursor-pointer min-w-0"
             onClick={() => navigate('/')}
           >
             <BookOpen className="w-8 h-8 text-primary-600" />
-            <div>
-              <h1 className="text-xl font-bold text-gray-900">Sistema de Evaluación</h1>
-              <p className="text-sm text-gray-600">CEIP Galicia</p>
+            <div className="min-w-0">
+              <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Sistema de Evaluación</h1>
+              <p className="text-sm text-gray-600 hidden sm:block truncate">CEIP Galicia</p>
             </div>
           </div>
 
           <div className="flex items-center gap-4">
             <div className="text-right hidden sm:block">
               <p className="text-sm font-medium text-gray-900">{teacher.name}</p>
-              <p className="text-xs text-gray-600">{teacher.email}</p>
+              <p className="text-xs text-gray-600 truncate max-w-[16rem]">{teacher.email}</p>
             </div>
             <button
               onClick={onLogout}

@@ -1,18 +1,68 @@
-import { Classroom, Student, EvaluationEntry, Teacher } from '../types';
+import { Classroom, Student, EvaluationEntry, Teacher, Competencia } from '../types';
+import { COMPETENCIAS_CLAVE } from '../data/competencias';
 
-const STORAGE_KEYS = {
+export const STORAGE_KEYS = {
   CLASSROOMS: 'avaliacion_classrooms',
   STUDENTS: 'avaliacion_students',
   EVALUATIONS: 'avaliacion_evaluations',
   TEACHER: 'avaliacion_teacher',
+  COMPETENCIAS: 'avaliacion_competencias',
+  /** Monotonic-ish timestamp used for cloud sync conflict resolution. */
+  SYNC_UPDATED_AT: 'avaliacion_sync_updatedAt',
 } as const;
+
+function notifyDataChanged(source: 'local' | 'remote' = 'local') {
+  try {
+    if (source === 'local') {
+      // Persist a last-updated marker so new devices don't overwrite remote with empty local data.
+      localStorage.setItem(STORAGE_KEYS.SYNC_UPDATED_AT, String(Date.now()));
+    }
+    window.dispatchEvent(new CustomEvent('avaliacion:data-changed', { detail: { source } }));
+  } catch {
+    // no-op (e.g. SSR)
+  }
+}
+
+function normalizeDate(value: any): Date {
+  try {
+    if (!value) return new Date(0);
+    if (value instanceof Date) return value;
+    if (typeof value === 'string' || typeof value === 'number') {
+      const d = new Date(value);
+      return Number.isNaN(d.getTime()) ? new Date(0) : d;
+    }
+    if (typeof value === 'object') {
+      if (typeof (value as any).toDate === 'function') {
+        const d = (value as any).toDate();
+        return d instanceof Date && !Number.isNaN(d.getTime()) ? d : new Date(0);
+      }
+      if (typeof (value as any).seconds === 'number') {
+        const d = new Date((value as any).seconds * 1000);
+        return Number.isNaN(d.getTime()) ? new Date(0) : d;
+      }
+    }
+    return new Date(0);
+  } catch {
+    return new Date(0);
+  }
+}
 
 export const storage = {
   // Classrooms
   getClassrooms(): Classroom[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.CLASSROOMS);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((c: any) => ({
+        ...c,
+        id: String(c?.id ?? ''),
+        name: String(c?.name ?? ''),
+        grade: String(c?.grade ?? ''),
+        studentCount: Number(c?.studentCount ?? 0) || 0,
+        createdAt: c?.createdAt,
+        updatedAt: c?.updatedAt,
+      })) as Classroom[];
     } catch (error) {
       console.error('Error loading classrooms:', error);
       return [];
@@ -22,6 +72,7 @@ export const storage = {
   saveClassrooms(classrooms: Classroom[]): void {
     try {
       localStorage.setItem(STORAGE_KEYS.CLASSROOMS, JSON.stringify(classrooms));
+      notifyDataChanged('local');
     } catch (error) {
       console.error('Error saving classrooms:', error);
     }
@@ -31,7 +82,20 @@ export const storage = {
   getStudents(): Student[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.STUDENTS);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((s: any) => ({
+        ...s,
+        id: String(s?.id ?? ''),
+        firstName: String(s?.firstName ?? ''),
+        lastName: String(s?.lastName ?? ''),
+        classroomId: String(s?.classroomId ?? ''),
+        listNumber: Number(s?.listNumber ?? 0) || 0,
+        progress: Number(s?.progress ?? 0) || 0,
+        averageGrade: Number(s?.averageGrade ?? 0) || 0,
+        createdAt: s?.createdAt,
+        updatedAt: s?.updatedAt,
+      })) as Student[];
     } catch (error) {
       console.error('Error loading students:', error);
       return [];
@@ -41,6 +105,7 @@ export const storage = {
   saveStudents(students: Student[]): void {
     try {
       localStorage.setItem(STORAGE_KEYS.STUDENTS, JSON.stringify(students));
+      notifyDataChanged('local');
     } catch (error) {
       console.error('Error saving students:', error);
     }
@@ -50,7 +115,19 @@ export const storage = {
   getEvaluations(): EvaluationEntry[] {
     try {
       const data = localStorage.getItem(STORAGE_KEYS.EVALUATIONS);
-      return data ? JSON.parse(data) : [];
+      const parsed = data ? JSON.parse(data) : [];
+      if (!Array.isArray(parsed)) return [];
+      return parsed.map((e: any) => ({
+        ...e,
+        id: String(e?.id ?? ''),
+        studentId: String(e?.studentId ?? ''),
+        competenciaId: String(e?.competenciaId ?? ''),
+        subCompetenciaId: e?.subCompetenciaId ? String(e.subCompetenciaId) : undefined,
+        rating: Number(e?.rating ?? 0) || 0,
+        observation: String(e?.observation ?? ''),
+        date: normalizeDate(e?.date),
+        evidenceUrls: Array.isArray(e?.evidenceUrls) ? e.evidenceUrls : [],
+      })) as EvaluationEntry[];
     } catch (error) {
       console.error('Error loading evaluations:', error);
       return [];
@@ -60,6 +137,7 @@ export const storage = {
   saveEvaluations(evaluations: EvaluationEntry[]): void {
     try {
       localStorage.setItem(STORAGE_KEYS.EVALUATIONS, JSON.stringify(evaluations));
+      notifyDataChanged('local');
     } catch (error) {
       console.error('Error saving evaluations:', error);
     }
@@ -79,8 +157,40 @@ export const storage = {
   saveTeacher(teacher: Teacher): void {
     try {
       localStorage.setItem(STORAGE_KEYS.TEACHER, JSON.stringify(teacher));
+      notifyDataChanged('local');
     } catch (error) {
       console.error('Error saving teacher:', error);
+    }
+  },
+
+  clearTeacher(): void {
+    try {
+      localStorage.removeItem(STORAGE_KEYS.TEACHER);
+      notifyDataChanged('local');
+    } catch (error) {
+      console.error('Error clearing teacher:', error);
+    }
+  },
+
+  // Competencias (editable)
+  getCompetencias(): Competencia[] {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.COMPETENCIAS);
+      if (!data) return COMPETENCIAS_CLAVE;
+      const parsed = JSON.parse(data);
+      return Array.isArray(parsed) ? parsed : COMPETENCIAS_CLAVE;
+    } catch (error) {
+      console.error('Error loading competencias:', error);
+      return COMPETENCIAS_CLAVE;
+    }
+  },
+
+  saveCompetencias(competencias: Competencia[]): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.COMPETENCIAS, JSON.stringify(competencias));
+      notifyDataChanged('local');
+    } catch (error) {
+      console.error('Error saving competencias:', error);
     }
   },
 
@@ -88,5 +198,6 @@ export const storage = {
     Object.values(STORAGE_KEYS).forEach(key => {
       localStorage.removeItem(key);
     });
+    notifyDataChanged('local');
   },
 };
