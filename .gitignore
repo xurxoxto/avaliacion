@@ -3,3 +3,8 @@ node_modules/
 *.log
 .env
 dist/
+
+# Firebase
+.firebase/
+firebase-debug.log
+firebase-debug.*.log

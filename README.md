@@ -87,6 +87,42 @@ npm run preview
 
 ### Despliegue
 
+#### Opción 1: Firebase Hosting (Recomendado)
+
+La aplicación ya está configurada para desplegarse en Firebase Hosting:
+
+1. **Instalar Firebase CLI**
+```bash
+npm install -g firebase-tools
+```
+
+2. **Iniciar sesión en Firebase**
+```bash
+firebase login
+```
+
+3. **Construir la aplicación**
+```bash
+npm run build
+```
+
+4. **Desplegar**
+```bash
+firebase deploy
+```
+
+Tu aplicación estará disponible en: `https://avaliacioncompetencias.web.app`
+
+**Configuración incluida:**
+- `firebase.json` - Configuración de hosting con rewrites para SPA
+- `.firebaserc` - Proyecto configurado: avaliacioncompetencias
+- Caché optimizado para assets estáticos
+- Redirección de todas las rutas al index.html para React Router
+
+**Nota:** Para desplegar el backend (API), considera usar Firebase Cloud Functions o un servidor separado.
+
+#### Opción 2: Servidor de Producción (VPS/Cloud)
+
 Para desplegar la aplicación en un servidor de producción:
 
 1. **Clonar el repositorio**
