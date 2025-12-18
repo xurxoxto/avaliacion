@@ -39,7 +39,12 @@ if (process.env.NODE_ENV === 'production') {
   app.use((req, res, next) => {
     // Only handle GET requests that don't start with /api
     if (req.method === 'GET' && !req.path.startsWith('/api')) {
-      res.sendFile(path.join(distPath, 'index.html'));
+      res.sendFile(path.join(distPath, 'index.html'), (err) => {
+        if (err) {
+          console.error('Error serving index.html:', err);
+          res.status(500).send('Frontend application not available');
+        }
+      });
     } else {
       next();
     }
