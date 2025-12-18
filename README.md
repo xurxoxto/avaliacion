@@ -61,15 +61,72 @@ npm run server
 
 ### Modo Producción
 
-**Build del Frontend**
+**1. Instalar dependencias**
+```bash
+npm install
+```
+
+**2. Build del Frontend**
 ```bash
 npm run build
 ```
 
-**Preview de la build**
+**3. Iniciar en modo producción**
+```bash
+npm start
+```
+
+El servidor iniciará en el puerto configurado (por defecto 3001) y servirá:
+- Frontend React en `http://localhost:3001`
+- API REST en `http://localhost:3001/api`
+
+**Preview de la build (alternativa para desarrollo)**
 ```bash
 npm run preview
 ```
+
+### Despliegue
+
+Para desplegar la aplicación en un servidor de producción:
+
+1. **Clonar el repositorio**
+```bash
+git clone https://github.com/xurxoxto/avaliacion.git
+cd avaliacion
+```
+
+2. **Instalar dependencias**
+```bash
+npm install
+```
+
+3. **Configurar variables de entorno**
+```bash
+cp .env.example .env
+# Editar .env con las configuraciones de producción
+# Especialmente: NODE_ENV=production, PORT, DATABASE_URL
+```
+
+4. **Construir la aplicación**
+```bash
+npm run build
+```
+
+5. **Iniciar el servidor**
+```bash
+npm start
+```
+
+**Notas de despliegue:**
+- El comando `npm start` ejecuta el servidor en modo producción
+- El servidor Express sirve tanto la aplicación React como las APIs
+- Se recomienda usar un process manager como PM2 para producción:
+  ```bash
+  npm install -g pm2
+  pm2 start npm --name "avaliacion" -- start
+  pm2 save
+  ```
+- Configure un proxy inverso (nginx/Apache) para HTTPS y dominios personalizados
 
 ## 🏗️ Estructura del Proyecto
 
