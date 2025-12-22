@@ -23,7 +23,7 @@ import { db } from '../config/firebase';
 import type { GradeKey, TriangulationObservation } from '../types';
 import { GRADE_LABEL_ES, GRADE_VALUE } from '../utils/triangulation/gradeScale';
 import { useTriangulationGrades } from '../hooks/useTriangulationGrades';
-import { generateTermLearningReport, generateTriangulationReportFromObservations } from '../utils/triangulation/reportText';
+import { buildAiReportPrompt, generateTermLearningReport, generateTriangulationReportFromObservations } from '../utils/triangulation/reportText';
 import { GRADE_COLOR_CLASS } from '../utils/triangulation/gradeScale';
 
 const TRI_EVIDENCE_WINDOW_DAYS = 45;
@@ -67,6 +67,9 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
   const [subByComp, setSubByComp] = useState<Record<string, string>>({});
   const [newProjectName, setNewProjectName] = useState('');
   const [copied, setCopied] = useState(false);
+  const [aiCopied, setAiCopied] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiText, setAiText] = useState<string>('');
   const [reportMode, setReportMode] = useState<'qualitative' | 'term'>('term');
   const [reportFrom, setReportFrom] = useState<string>(() => {
     const d = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
@@ -457,6 +460,28 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
       maxEvidencePerCompetencia: 2,
     });
   }, [student, classroom, competencias, reportObs, projects, reportMode, reportRange, reportRangeLabel]);
+
+  const aiPromptText = useMemo(() => {
+    if (!student) return '';
+    const studentName = `${student.firstName} ${student.lastName}`;
+    return buildAiReportPrompt({
+      mode: reportMode,
+      studentName,
+      classroomGrade: classroom?.grade,
+      termLabel: reportMode === 'term' ? (reportRangeLabel || undefined) : undefined,
+      competencias,
+      observations: reportObs,
+      projects,
+      from: reportMode === 'term' ? (reportRange.from || undefined) : undefined,
+      to: reportMode === 'term' ? (reportRange.to || undefined) : undefined,
+      maxObservations: 60,
+    });
+  }, [student, classroom, competencias, reportObs, projects, reportMode, reportRange, reportRangeLabel]);
+
+  useEffect(() => {
+    // If the user changes filters/mode, drop any AI-generated override to avoid confusion.
+    setAiText('');
+  }, [reportMode, reportFrom, reportTo, student?.id]);
 
   const finalKey = student ? tri.finalAvgKey.get(student.id) : undefined;
   const finalNumeric = student ? tri.finalAvgNumeric.get(student.id) : undefined;
@@ -957,9 +982,54 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
                       <button
                         type="button"
                         className="btn-secondary flex items-center gap-2"
+                        disabled={aiBusy || !aiPromptText}
+                        onClick={async () => {
+                          if (!aiPromptText) return;
+                          setAiBusy(true);
+                          try {
+                            const res = await fetch('/api/ai/report', {
+                              method: 'POST',
+                              headers: { 'content-type': 'application/json' },
+                              body: JSON.stringify({ prompt: aiPromptText }),
+                            });
+                            const data = await res.json().catch(() => ({}));
+                            if (!res.ok || !data?.text) {
+                              const msg = data?.error || 'No se pudo generar el informe con IA.';
+                              throw new Error(msg);
+                            }
+                            setAiText(String(data.text));
+                          } catch (e: any) {
+                            alert(e?.message || 'No se pudo generar el informe con IA.');
+                          } finally {
+                            setAiBusy(false);
+                          }
+                        }}
+                      >
+                        <Clipboard className="w-5 h-5" />
+                        {aiBusy ? 'IA…' : 'IA'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary flex items-center gap-2"
                         onClick={async () => {
                           try {
-                            await navigator.clipboard.writeText(reportText);
+                            await navigator.clipboard.writeText(aiPromptText);
+                            setAiCopied(true);
+                            window.setTimeout(() => setAiCopied(false), 2000);
+                          } catch {
+                            alert('No se pudo copiar al portapapeles.');
+                          }
+                        }}
+                      >
+                        <Clipboard className="w-5 h-5" />
+                        {aiCopied ? 'Prompt copiado' : 'Copiar Prompt'}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary flex items-center gap-2"
+                        onClick={async () => {
+                          try {
+                            await navigator.clipboard.writeText(aiText || reportText);
                             setCopied(true);
                             window.setTimeout(() => setCopied(false), 2000);
                           } catch {
@@ -968,7 +1038,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
                         }}
                       >
                         <Clipboard className="w-5 h-5" />
-                        {copied ? 'Copiado' : 'Copiar'}
+                        {copied ? 'Copiado' : 'Copiar Informe'}
                       </button>
                       </div>
                     </div>
@@ -996,7 +1066,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
                         <p className="text-xs text-gray-500 sm:ml-auto">{reportObs.length} evidencias en el rango</p>
                       </div>
                     )}
-                    <textarea className="input-field mt-3" rows={reportMode === 'term' ? 12 : 6} readOnly value={reportText} />
+                    <textarea className="input-field mt-3" rows={reportMode === 'term' ? 12 : 6} readOnly value={aiText || reportText} />
                   </div>
                 </div>
               </div>

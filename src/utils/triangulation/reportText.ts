@@ -489,24 +489,6 @@ export function generateTriangulationReportFromObservations(params: {
   parts.push('Mirada formativa (no es una nota): qué está mostrando y qué ajuste hacemos a continuación.');
   parts.push('');
 
-  if (strengths.length > 0) {
-    parts.push('Fortalezas (mantener y extender):');
-    strengths.forEach(s => parts.push(`- ${s}`));
-    parts.push('');
-  }
-
-  if (developing.length > 0) {
-    parts.push('En progreso (consolidación):');
-    developing.forEach(s => parts.push(`- ${s}`));
-    parts.push('');
-  }
-
-  if (priority.length > 0) {
-    parts.push('Prioridad de apoyo (plan de mejora):');
-    priority.forEach(s => parts.push(`- ${s}`));
-    parts.push('');
-  }
-
   const makeBlock = (title: string, headers: string[]) => {
     if (headers.length === 0) return;
     parts.push(title);
@@ -564,4 +546,111 @@ export function generateTriangulationReportFromObservations(params: {
   }
 
   return parts.join('\n');
+}
+
+function safeJsonStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return '';
+  }
+}
+
+function toIsoDate(d: Date | null | undefined): string {
+  if (!d) return '';
+  try {
+    if (!(d instanceof Date)) return '';
+    if (!Number.isFinite(d.getTime())) return '';
+    return d.toISOString();
+  } catch {
+    return '';
+  }
+}
+
+export function buildAiReportPrompt(params: {
+  mode: 'term' | 'qualitative';
+  studentName: string;
+  classroomGrade?: string;
+  termLabel?: string;
+  competencias: Competencia[];
+  observations: TriangulationObservation[];
+  projects: Project[];
+  from?: Date;
+  to?: Date;
+  maxObservations?: number;
+}): string {
+  const {
+    mode,
+    studentName,
+    classroomGrade,
+    termLabel,
+    competencias,
+    observations,
+    projects,
+    from,
+    to,
+  } = params;
+  const maxObservations = params.maxObservations ?? 60;
+
+  const projectNameById = new Map(projects.map(p => [p.id, p.name] as const));
+  const competenciaById = new Map(competencias.map(c => [c.id, c] as const));
+
+  const sorted = [...observations]
+    .filter(o => o && o.competenciaId)
+    .sort((a, b) => (b.createdAt?.getTime?.() || 0) - (a.createdAt?.getTime?.() || 0));
+
+  // Limit size for the prompt.
+  const trimmed = sorted.slice(0, Math.max(0, maxObservations));
+
+  const payload = trimmed.map(o => {
+    const c = competenciaById.get(o.competenciaId);
+    const pid = o.projectId || 'unknown';
+    const projectName = pid === 'local'
+      ? 'Offline'
+      : (pid === 'unknown' ? 'Sin proyecto' : (projectNameById.get(pid) || 'Proyecto eliminado'));
+    return {
+      date: toIsoDate(o.createdAt instanceof Date ? o.createdAt : null),
+      competencia: c ? `${c.code} — ${c.name}` : o.competenciaId,
+      subCompetenciaId: o.subCompetenciaId || null,
+      project: projectName,
+      level: o.gradeKey,
+      levelLabel: GRADE_LABEL_ES[o.gradeKey],
+      numeric: Number(GRADE_VALUE[o.gradeKey]).toFixed(1),
+      observation: String(o.observation || '').trim(),
+      teacher: o.teacherName || o.teacherEmail || null,
+    };
+  });
+
+  const metaLines: string[] = [];
+  metaLines.push(`Alumno/a: ${studentName}`);
+  if (classroomGrade) metaLines.push(`Curso: ${classroomGrade}`);
+  if (termLabel) metaLines.push(`Periodo: ${termLabel}`);
+  else {
+    const a = from ? formatDateLongEs(from) : '';
+    const b = to ? formatDateLongEs(to) : '';
+    if (a || b) metaLines.push(`Periodo: ${a || '—'}–${b || '—'}`);
+  }
+
+  const style = mode === 'term'
+    ? 'Informe trimestral (tono profesional, claro, no excesivamente largo).'
+    : 'Informe cualitativo formativo (Sanmartí: evidencia → interpretación → decisión docente / próximos pasos).';
+
+  return [
+    'Eres un/a docente tutor/a. Genera un informe SOLO con los datos proporcionados.',
+    'No inventes hechos ni resultados no observados. Si faltan evidencias, indícalo explícitamente.',
+    '',
+    style,
+    '',
+    'Requisitos:',
+    '- Lengua: español.',
+    '- Estructura con títulos cortos y viñetas.',
+    '- Cita 3–6 evidencias textuales (entrecomilladas) que justifiquen conclusiones.',
+    '- Incluye 3–5 próximos pasos concretos (acción docente + acción del alumno).',
+    '- Evita jerga y evita “nota final”; usa niveles (Discrepancia/Reproductivo/Autónomo/Transferencia).',
+    '',
+    `Contexto: ${metaLines.join(' | ')}`,
+    '',
+    'Evidencias (JSON):',
+    safeJsonStringify(payload),
+  ].join('\n');
 }

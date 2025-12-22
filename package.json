@@ -36,6 +36,7 @@
     "vite": "^7.3.0"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "chart.js": "^4.5.1",
     "cors": "^2.8.5",
     "csv-parse": "^6.1.0",
