@@ -1,12 +1,18 @@
-import { Users, Calendar } from 'lucide-react';
+import { Users, Calendar, Trash2 } from 'lucide-react';
 import { Classroom } from '../types';
 
 interface ClassroomCardProps {
   classroom: Classroom;
   onClick: () => void;
+  onDelete: () => void;
 }
 
-export default function ClassroomCard({ classroom, onClick }: ClassroomCardProps) {
+export default function ClassroomCard({ classroom, onClick, onDelete }: ClassroomCardProps) {
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete();
+  };
+
   return (
     <div
       onClick={onClick}
@@ -38,9 +44,19 @@ export default function ClassroomCard({ classroom, onClick }: ClassroomCardProps
         </div>
       </div>
 
-      <div className="mt-4 pt-4 border-t border-gray-200">
-        <button className="text-primary-600 hover:text-primary-700 font-medium text-sm">
+      <div className="mt-4 pt-4 border-t border-gray-200 flex justify-between items-center">
+        <button
+          onClick={onClick}
+          className="text-primary-600 hover:text-primary-700 font-medium text-sm"
+        >
           Ver detalles →
+        </button>
+        <button
+          onClick={handleDelete}
+          className="text-red-500 hover:text-red-700 font-medium text-sm p-2 rounded-full hover:bg-red-100"
+          aria-label="Eliminar aula"
+        >
+          <Trash2 className="w-5 h-5" />
         </button>
       </div>
     </div>

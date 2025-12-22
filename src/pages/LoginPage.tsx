@@ -1,15 +1,13 @@
 import { useState } from 'react';
 import { Mail, Lock } from 'lucide-react';
-import { Teacher } from '../types';
 import { auth } from '../config/firebase';
 import { createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'firebase/auth';
 
 interface LoginPageProps {
-  onLogin: (teacher: Teacher) => void;
-  externalError?: string;
+  error?: string;
 }
 
-export default function LoginPage({ onLogin, externalError }: LoginPageProps) {
+export default function LoginPage({ error: externalError }: LoginPageProps) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -21,14 +19,14 @@ export default function LoginPage({ onLogin, externalError }: LoginPageProps) {
     setError('');
     setLoading(true);
 
-    if (!email || !email.includes('@')) {
-      setError('Por favor, introduce un email válido');
+    const normalizedEmail = email.trim().toLowerCase();
+    if (!normalizedEmail || !normalizedEmail.includes('@')) {
+      setError('Por favor, introduce un correo válido.');
       setLoading(false);
       return;
     }
 
-    // Domain restriction (matches Firestore rules)
-    const normalizedEmail = email.trim().toLowerCase();
+    // Keep UX aligned with Firestore rules and App-level enforcement.
     if (!normalizedEmail.endsWith('@edu.xunta.gal')) {
       setError('Solo se permiten cuentas @edu.xunta.gal');
       setLoading(false);
@@ -36,58 +34,43 @@ export default function LoginPage({ onLogin, externalError }: LoginPageProps) {
     }
 
     if (!password) {
-      setError('Por favor, introduce una contraseña');
+      setError('Por favor, introduce una contraseña.');
       setLoading(false);
       return;
     }
 
     try {
-      let userCredential;
-      if (mode === 'signup') {
-        userCredential = await createUserWithEmailAndPassword(auth, normalizedEmail, password);
+      if (mode === 'login') {
+        await signInWithEmailAndPassword(auth, normalizedEmail, password);
       } else {
-        userCredential = await signInWithEmailAndPassword(auth, normalizedEmail, password);
+        await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       }
-
-      const user = userCredential.user;
-      const userEmail = (user.email || normalizedEmail).toLowerCase();
-      const domain = userEmail.split('@')[1] || userEmail;
-      const workspaceId = domain;
-
-      const teacher: Teacher = {
-        id: user.uid,
-        name: userEmail.split('@')[0],
-        email: userEmail,
-        workspaceId,
-        classroomIds: [],
-      };
-
-      onLogin(teacher);
     } catch (err: any) {
       const code = err?.code as string | undefined;
-      if (code === 'auth/invalid-credential') setError('Credenciales incorrectas');
-      else if (code === 'auth/user-not-found') setError('Usuario no encontrado');
-      else if (code === 'auth/wrong-password') setError('Contraseña incorrecta');
-      else if (code === 'auth/email-already-in-use') setError('Ese email ya está registrado');
-      else if (code === 'auth/weak-password') setError('La contraseña es demasiado débil');
-      else if (code === 'auth/network-request-failed') setError('Error de red. Revisa tu conexión.');
-      else if (code === 'auth/operation-not-allowed') {
+      if (code === 'auth/invalid-credential' || code === 'auth/user-not-found' || code === 'auth/wrong-password') {
+        setError('Correo electrónico o contraseña incorrectos.');
+      } else if (code === 'auth/email-already-in-use') {
+        setError('Este correo electrónico ya está registrado.');
+      } else if (code === 'auth/weak-password') {
+        setError('La contraseña es demasiado débil.');
+      } else if (code === 'auth/network-request-failed') {
+        setError('Error de red. Revisa tu conexión.');
+      } else if (code === 'auth/operation-not-allowed') {
         setError('En Firebase: habilita Email/Password en Authentication → Sign-in method.');
-      }
-      else if (code === 'auth/unauthorized-domain') {
-        setError('Dominio no autorizado en Firebase Auth. Añade este dominio en Authentication → Settings → Authorized domains.');
-      }
-      else if (code === 'auth/too-many-requests') {
+      } else if (code === 'auth/unauthorized-domain') {
+        setError('Dominio no autorizado en Firebase Auth.');
+      } else if (code === 'auth/too-many-requests') {
         setError('Demasiados intentos. Espera un momento y vuelve a intentarlo.');
+      } else {
+        setError('No se pudo iniciar sesión.');
       }
-      else setError('No se pudo iniciar sesión');
     } finally {
       setLoading(false);
     }
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-primary-600 to-primary-800 px-4">
+    <div className="min-h-screen bg-gray-50 flex items-center justify-center px-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <div className="text-center mb-8">

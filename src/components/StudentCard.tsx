@@ -1,12 +1,13 @@
-import { User, Hash } from 'lucide-react';
+import { User, Hash, Trash2 } from 'lucide-react';
 import { Student } from '../types';
 
 interface StudentCardProps {
   student: Student;
   onClick: () => void;
+  onDelete: () => void;
 }
 
-export default function StudentCard({ student, onClick }: StudentCardProps) {
+export default function StudentCard({ student, onClick, onDelete }: StudentCardProps) {
   const getGradeColor = (grade: number) => {
     if (grade >= 9) return 'bg-green-100 text-green-800';
     if (grade >= 7) return 'bg-yellow-100 text-yellow-800';
@@ -19,6 +20,11 @@ export default function StudentCard({ student, onClick }: StudentCardProps) {
     if (progress >= 60) return 'bg-yellow-500';
     if (progress >= 40) return 'bg-orange-500';
     return 'bg-red-500';
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete();
   };
 
   return (
@@ -65,9 +71,19 @@ export default function StudentCard({ student, onClick }: StudentCardProps) {
         </div>
       </div>
 
-      <div className="mt-4 pt-4 border-t border-gray-200">
-        <button className="text-primary-600 hover:text-primary-700 font-medium text-sm">
+      <div className="mt-4 pt-4 border-t border-gray-200 flex justify-between items-center">
+        <button
+          onClick={onClick}
+          className="text-primary-600 hover:text-primary-700 font-medium text-sm"
+        >
           Ver detalles →
+        </button>
+        <button
+          onClick={handleDelete}
+          className="text-red-500 hover:text-red-700 font-medium text-sm p-2 rounded-full hover:bg-red-100"
+          aria-label="Eliminar estudiante"
+        >
+          <Trash2 className="w-5 h-5" />
         </button>
       </div>
     </div>

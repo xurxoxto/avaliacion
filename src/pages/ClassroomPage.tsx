@@ -3,12 +3,16 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus, Search, User, Trash2 } from 'lucide-react';
 import { Teacher, Classroom, Student } from '../types';
 import { storage } from '../utils/storage';
-import { useRemoteRefresh } from '../utils/useRemoteRefresh';
 import Header from '../components/Header';
 import StudentCard from '../components/StudentCard';
 import CreateStudentModal from '../components/CreateStudentModal';
+import Breadcrumbs from '../components/Breadcrumbs';
 import { deleteGradesForStudents } from '../utils/firestore/grades';
 import { deleteTriangulationObservationsForStudents } from '../utils/firestore/triangulationObservations';
+import { listenStudentsByClassroom, createStudent, deleteStudent } from '../utils/firestore/students';
+import { listenClassrooms, deleteClassroom } from '../utils/firestore/classrooms';
+import { doc, increment, updateDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 interface ClassroomPageProps {
   teacher: Teacher;
@@ -25,35 +29,31 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
   const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
-    if (id) {
-      loadClassroom(id);
-      loadStudents(id);
-    }
-  }, [id]);
+    if (!id) return;
 
-  useRemoteRefresh(() => {
-    if (id) {
-      loadClassroom(id);
-      loadStudents(id);
-    }
-  });
+    if (!teacher.workspaceId) return;
+
+    const unsubClassrooms = listenClassrooms(teacher.workspaceId, (remoteClassrooms) => {
+      storage.saveClassrooms(remoteClassrooms);
+      const found = remoteClassrooms.find(c => c.id === id);
+      setClassroom(found || null);
+    });
+
+    const unsubStudents = listenStudentsByClassroom(teacher.workspaceId, id, (remoteStudents) => {
+      setStudents(remoteStudents);
+      const allLocalStudents = storage.getStudents().filter(s => s.classroomId !== id);
+      storage.saveStudents([...allLocalStudents, ...remoteStudents]);
+    });
+
+    return () => {
+      unsubClassrooms();
+      unsubStudents();
+    };
+  }, [id, teacher.workspaceId]);
 
   useEffect(() => {
     filterStudents();
   }, [searchQuery, students]);
-
-  const loadClassroom = (classroomId: string) => {
-    const allClassrooms = storage.getClassrooms();
-    const found = allClassrooms.find(c => c.id === classroomId);
-    setClassroom(found || null);
-  };
-
-  const loadStudents = (classroomId: string) => {
-    const allStudents = storage.getStudents();
-    const classroomStudents = allStudents.filter(s => s.classroomId === classroomId);
-    setStudents(classroomStudents);
-    setFilteredStudents(classroomStudents);
-  };
 
   const filterStudents = () => {
     if (!searchQuery.trim()) {
@@ -69,27 +69,44 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     setFilteredStudents(filtered);
   };
 
-  const handleCreateStudent = (studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>) => {
-    const newStudent: Student = {
-      ...studentData,
-      id: Date.now().toString(),
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    };
-
-    const updatedStudents = [...students, newStudent];
-    storage.saveStudents([...storage.getStudents().filter(s => s.classroomId !== id), ...updatedStudents]);
-    setStudents(updatedStudents);
+  const handleCreateStudent = async (studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (teacher.workspaceId && id) {
+      try {
+        await createStudent(teacher.workspaceId, studentData);
+        // After creating the student, update the classroom's student count
+        const classroomRef = doc(db, 'workspaces', teacher.workspaceId, 'classrooms', id);
+        await updateDoc(classroomRef, {
+          studentCount: increment(1),
+          updatedAt: new Date(),
+        });
+      } catch (error) {
+        console.error("Error creating student:", error);
+        alert("Hubo un error al crear el estudiante. Por favor, inténtalo de nuevo.");
+      }
+    }
     setShowCreateModal(false);
+  };
 
-    // Update classroom student count
-    if (classroom) {
-      const allClassrooms = storage.getClassrooms();
-      const updatedClassrooms = allClassrooms.map(c =>
-        c.id === classroom.id ? { ...c, studentCount: updatedStudents.length, updatedAt: new Date() } : c
-      );
-      storage.saveClassrooms(updatedClassrooms);
-      setClassroom({ ...classroom, studentCount: updatedStudents.length });
+  const handleDeleteStudent = async (studentId: string) => {
+    if (window.confirm('¿Estás seguro de que quieres eliminar este estudiante? Esta acción no se puede deshacer.')) {
+      if (teacher.workspaceId && id) {
+        try {
+          await Promise.all([
+            deleteGradesForStudents(teacher.workspaceId, [studentId]),
+            deleteTriangulationObservationsForStudents(teacher.workspaceId, [studentId]),
+          ]);
+          await deleteStudent(teacher.workspaceId, studentId);
+          // After deleting the student, update the classroom's student count
+          const classroomRef = doc(db, 'workspaces', teacher.workspaceId, 'classrooms', id);
+          await updateDoc(classroomRef, {
+            studentCount: increment(-1),
+            updatedAt: new Date(),
+          });
+        } catch (error) {
+          console.error("Error deleting student:", error);
+          alert("Hubo un error al eliminar el estudiante. Por favor, inténtalo de nuevo.");
+        }
+      }
     }
   };
 
@@ -98,33 +115,22 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     const ok = confirm(`Eliminar el aula "${classroom.name}" y todos sus estudiantes? Esta acción no se puede deshacer.`);
     if (!ok) return;
 
-    // Remove classroom
-    const updatedClassrooms = storage.getClassrooms().filter(c => c.id !== id);
-    storage.saveClassrooms(updatedClassrooms);
-
-    // Remove students in classroom
-    const allStudents = storage.getStudents();
-    const remainingStudents = allStudents.filter(s => s.classroomId !== id);
-    storage.saveStudents(remainingStudents);
-
-    // Remove triangulation grades (Firestore)
-    const removedStudentIdsList = allStudents.filter(s => s.classroomId === id).map(s => s.id);
-    if (teacher.workspaceId && removedStudentIdsList.length > 0) {
-      deleteGradesForStudents(teacher.workspaceId, removedStudentIdsList).catch(() => {
-        // Continue local delete even if remote delete fails
+    const workspaceId = teacher.workspaceId;
+    if (!workspaceId) return;
+    const removedStudentIdsList = students.map(s => s.id);
+    Promise.all([
+      removedStudentIdsList.length > 0
+        ? deleteGradesForStudents(workspaceId, removedStudentIdsList)
+        : Promise.resolve(),
+      removedStudentIdsList.length > 0
+        ? deleteTriangulationObservationsForStudents(workspaceId, removedStudentIdsList)
+        : Promise.resolve(),
+    ])
+      .then(() => deleteClassroom(workspaceId, id))
+      .then(() => navigate('/'))
+      .catch(() => {
+        alert('No se pudo eliminar el aula.');
       });
-
-      deleteTriangulationObservationsForStudents(teacher.workspaceId, removedStudentIdsList).catch(() => {
-        // Continue local delete even if remote delete fails
-      });
-    }
-
-    // Remove evaluations that belong to removed students
-    const removedStudentIds = new Set(removedStudentIdsList);
-    const remainingEvaluations = storage.getEvaluations().filter(e => !removedStudentIds.has(e.studentId));
-    storage.saveEvaluations(remainingEvaluations);
-
-    navigate('/');
   };
 
   if (!classroom) {
@@ -143,20 +149,24 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
       <Header teacher={teacher} onLogout={onLogout} />
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 sm:py-8">
-        <button
-          onClick={() => navigate('/')}
-          className="btn-secondary flex items-center justify-center gap-2 mb-6 w-full sm:w-auto"
-        >
-          <ArrowLeft className="w-5 h-5" />
-          Volver al Dashboard
-        </button>
-
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">{classroom.name}</h1>
-            <p className="text-gray-600 mt-2">
-              {classroom.grade} • {students.length} {students.length === 1 ? 'estudiante' : 'estudiantes'}
-            </p>
+        {classroom && (
+          <Breadcrumbs items={[{ label: classroom.name, path: `/classroom/${id}` }]} />
+        )}
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => navigate('/')}
+              className="btn-secondary flex items-center justify-center gap-2"
+            >
+              <ArrowLeft className="w-5 h-5" />
+              Volver al Dashboard
+            </button>
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">{classroom.name}</h1>
+              <p className="text-gray-600 mt-2">
+                {classroom.grade} • {students.length} {students.length === 1 ? 'estudiante' : 'estudiantes'}
+              </p>
+            </div>
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <button
@@ -212,12 +222,13 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredStudents.map((student) => (
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6">
+            {filteredStudents.map(student => (
               <StudentCard
                 key={student.id}
                 student={student}
-                onClick={() => navigate(`/student/${student.id}`)}
+                onClick={() => navigate(`/classroom/${id}/student/${student.id}`)}
+                onDelete={() => handleDeleteStudent(student.id)}
               />
             ))}
           </div>

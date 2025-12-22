@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import classroomsRouter from './routes/classrooms.js';
 import studentsRouter from './routes/students.js';
 import evaluationsRouter from './routes/evaluations.js';
+import registrarEvaluacionRouter from './routes/registrarEvaluacion.js';
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.use(express.urlencoded({ extended: true }));
 app.use('/api/classrooms', classroomsRouter);
 app.use('/api/students', studentsRouter);
 app.use('/api/evaluations', evaluationsRouter);
+app.use('/api/registrar-evaluacion', registrarEvaluacionRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

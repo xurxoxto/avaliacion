@@ -6,6 +6,12 @@ import { storage } from '../utils/storage';
 import type { Competencia, SubCompetencia, Teacher } from '../types';
 import { useRemoteRefresh } from '../utils/useRemoteRefresh';
 import {
+  getRelatedLomloeCompetenceCodes,
+  LOMLOE_COMPETENCE_CODES,
+  LOMLOE_RELATIONSHIP_SOURCE_URL,
+  normalizeCompetenceCode,
+} from '../data/competencias';
+import {
   deleteCompetencia as deleteCompetenciaRemote,
   listenCompetencias,
   seedCompetenciasIfEmpty,
@@ -111,6 +117,26 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
     for (const c of competencias) map.set(c.id, c);
     return map;
   }, [competencias]);
+
+  const hasFullLomloeKeySet = useMemo(() => {
+    const codes = new Set(competencias.map((c) => normalizeCompetenceCode(c.code)));
+    return LOMLOE_COMPETENCE_CODES.every((c) => codes.has(c));
+  }, [competencias]);
+
+  const orderedCompetencias = useMemo(() => {
+    if (!hasFullLomloeKeySet) return competencias;
+    const orderIndex = (code: string) => {
+      const normalized = normalizeCompetenceCode(code);
+      const idx = (LOMLOE_COMPETENCE_CODES as readonly string[]).indexOf(normalized);
+      return idx >= 0 ? idx : 999;
+    };
+    return [...competencias].sort((a, b) => {
+      const oa = orderIndex(a.code);
+      const ob = orderIndex(b.code);
+      if (oa !== ob) return oa - ob;
+      return normalizeCompetenceCode(a.code).localeCompare(normalizeCompetenceCode(b.code));
+    });
+  }, [competencias, hasFullLomloeKeySet]);
 
   const queueUpsert = (competencia: Competencia) => {
     if (!teacher.workspaceId) return;
@@ -240,6 +266,16 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
           <p className="text-gray-600 mt-2">Edita competencias y añade sub-competencias.</p>
           <p className="text-sm text-gray-500 mt-2">Los pesos se expresan en porcentaje (0–100).</p>
 
+          {hasFullLomloeKeySet && (
+            <p className="text-sm text-gray-600 mt-2">
+              En LOMLOE (Galicia), las competencias clave se desarrollan de forma transversal e interrelacionada (sin jerarquía):
+              trabajar una contribuye a las demás. Fuente:{' '}
+              <a className="underline" href={LOMLOE_RELATIONSHIP_SOURCE_URL} target="_blank" rel="noreferrer">
+                DOG – Decreto 155/2022 (Anexo I, Perfil de salida)
+              </a>
+            </p>
+          )}
+
           {teacher.workspaceId && showSharedNotice && (
             <div className="card mt-4">
               <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
@@ -269,7 +305,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
             <input
               className="input-field h-10 md:w-32 md:justify-self-start px-3 py-2 text-sm font-semibold tracking-wide uppercase"
-              placeholder="Código (p.ej. C1)"
+              placeholder="Código (p.ej. CCL)"
               value={newComp.code}
               onChange={(e) => setNewComp(v => ({ ...v, code: e.target.value }))}
             />
@@ -294,7 +330,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
         </div>
 
         <div className="space-y-6">
-          {competencias.map((comp) => (
+          {orderedCompetencias.map((comp) => (
             <div key={comp.id} className="card">
               <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
                 <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
@@ -339,6 +375,22 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
                     onChange={(e) => updateCompetencia(comp.id, { description: e.target.value })}
                     aria-label="Descripción"
                   />
+
+                  {hasFullLomloeKeySet && getRelatedLomloeCompetenceCodes(comp.code).length > 0 && (
+                    <div className="md:col-span-12">
+                      <div className="text-xs text-gray-500 mb-2">Relacionada con</div>
+                      <div className="flex flex-wrap gap-2">
+                        {getRelatedLomloeCompetenceCodes(comp.code).map((code) => (
+                          <span
+                            key={code}
+                            className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700"
+                          >
+                            {code}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <button

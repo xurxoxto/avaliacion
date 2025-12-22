@@ -88,7 +88,7 @@ export interface TriangulationObservation {
   competenciaId: string;
   subCompetenciaId?: string;
   gradeKey: GradeKey;
-  /** Numeric value derived from gradeKey (e.g., BLUE=9.5). */
+  /** Numeric value derived from gradeKey (e.g., BLUE=10.0). */
   numericValue: number;
   observation: string;
   /** Author information (for multi-teacher collaboration). */

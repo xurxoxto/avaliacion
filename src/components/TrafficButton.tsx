@@ -1,6 +1,6 @@
 import { Circle } from 'lucide-react';
 import type { GradeKey } from '../types';
-import { GRADE_COLOR_CLASS, GRADE_LABEL_ES, GRADE_KEYS } from '../utils/triangulation/gradeScale';
+import { GRADE_COLOR_CLASS, GRADE_LABEL_ES, GRADE_KEYS, GRADE_VALUE } from '../utils/triangulation/gradeScale';
 
 interface TrafficButtonProps {
   value: GradeKey | null;
@@ -13,6 +13,7 @@ export default function TrafficButton({ value, onChange, disabled }: TrafficButt
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
       {GRADE_KEYS.map((k) => {
         const active = value === k;
+        const label = `${GRADE_LABEL_ES[k]} (${GRADE_VALUE[k].toFixed(1)})`;
         return (
           <button
             key={k}
@@ -24,7 +25,8 @@ export default function TrafficButton({ value, onChange, disabled }: TrafficButt
               (active ? 'border-gray-900' : 'border-gray-200') +
               (disabled ? ' opacity-60 cursor-not-allowed' : ' hover:border-gray-400')
             }
-            aria-label={GRADE_LABEL_ES[k]}
+            aria-label={label}
+            title={label}
           >
             <span className={`inline-flex items-center justify-center w-10 h-10 sm:w-8 sm:h-8 rounded-full ${GRADE_COLOR_CLASS[k]}`}>
               <Circle className="w-5 h-5 sm:w-4 sm:h-4 text-white" />

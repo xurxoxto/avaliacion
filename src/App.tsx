@@ -6,30 +6,32 @@ import StudentPage from './pages/StudentPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import CompetenciasPage from './pages/CompetenciasPage';
 import LoginPage from './pages/LoginPage';
-import { storage } from './utils/storage';
 import { startCloudSync, stopCloudSync } from './utils/cloudSync';
 import { Teacher } from './types';
 import { auth } from './config/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import ErrorBoundary from './components/ErrorBoundary';
+import { useRef } from 'react';
 
 function App() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [loading, setLoading] = useState(true);
-  const [authError, setAuthError] = useState<string>('');
+  const activeWorkspaceId = useRef<string | null>(null);
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user || !user.email) {
+        activeWorkspaceId.current = null;
+        stopCloudSync();
         setTeacher(null);
-        setAuthError('');
         setLoading(false);
         return;
       }
 
       const userEmail = user.email.toLowerCase();
       if (!userEmail.endsWith('@edu.xunta.gal')) {
-        setAuthError('Solo se permiten cuentas @edu.xunta.gal');
+        activeWorkspaceId.current = null;
+        stopCloudSync();
         void signOut(auth).catch(() => {
           // ignore
         });
@@ -38,7 +40,6 @@ function App() {
         return;
       }
 
-      setAuthError('');
       const domain = userEmail.split('@')[1] || userEmail;
       const next: Teacher = {
         id: user.uid,
@@ -47,60 +48,50 @@ function App() {
         workspaceId: domain,
         classroomIds: [],
       };
-
-      storage.saveTeacher(next);
       setTeacher(next);
+      if (next.workspaceId) {
+        if (activeWorkspaceId.current !== next.workspaceId) {
+          stopCloudSync();
+          startCloudSync(next.workspaceId);
+          activeWorkspaceId.current = next.workspaceId;
+        }
+      }
       setLoading(false);
     });
 
-    return () => unsub();
-  }, []);
-
-  useEffect(() => {
-    if (teacher?.workspaceId) void startCloudSync(teacher.workspaceId);
     return () => {
+      unsub();
       stopCloudSync();
     };
-  }, [teacher?.id, teacher?.workspaceId]);
-
-  const handleLogin = (teacherData: Teacher) => {
-    storage.saveTeacher(teacherData);
-    setTeacher(teacherData);
-  };
+  }, []);
 
   const handleLogout = () => {
-    stopCloudSync();
-    void signOut(auth).catch(() => {
-      // ignore
-    });
-    storage.clearTeacher();
-    setTeacher(null);
+    void signOut(auth);
   };
 
   if (loading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center">
-        <div className="text-xl text-gray-600">Cargando...</div>
-      </div>
-    );
-  }
-
-  if (!teacher || !teacher.id) {
-    return <LoginPage onLogin={handleLogin} externalError={authError} />;
+    return <div className="w-screen h-screen flex items-center justify-center">Cargando...</div>;
   }
 
   return (
     <ErrorBoundary>
-      <div className="min-h-screen bg-gray-50">
-        <Routes>
-          <Route path="/" element={<DashboardPage teacher={teacher} onLogout={handleLogout} />} />
-          <Route path="/classroom/:id" element={<ClassroomPage teacher={teacher} onLogout={handleLogout} />} />
-          <Route path="/student/:id" element={<StudentPage teacher={teacher} onLogout={handleLogout} />} />
-          <Route path="/analytics" element={<AnalyticsPage teacher={teacher} onLogout={handleLogout} />} />
-          <Route path="/competencias" element={<CompetenciasPage teacher={teacher} onLogout={handleLogout} />} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </div>
+      <Routes>
+        {teacher ? (
+          <>
+            <Route path="/" element={<DashboardPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route path="/classroom/:id" element={<ClassroomPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route path="/classroom/:classroomId/student/:id" element={<StudentPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route path="/analytics" element={<AnalyticsPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route path="/competencias" element={<CompetenciasPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route path="*" element={<Navigate to="/" />} />
+          </>
+        ) : (
+          <>
+            <Route path="/login" element={<LoginPage />} />
+            <Route path="*" element={<Navigate to="/login" />} />
+          </>
+        )}
+      </Routes>
     </ErrorBoundary>
   );
 }

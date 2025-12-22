@@ -1,19 +1,19 @@
 import type { GradeKey } from '../../types';
 
-export const GRADE_KEYS: GradeKey[] = ['BLUE', 'GREEN', 'YELLOW', 'RED'];
+export const GRADE_KEYS: GradeKey[] = ['RED', 'YELLOW', 'GREEN', 'BLUE'];
 
 export const GRADE_VALUE: Record<GradeKey, number> = {
-  BLUE: 9.5,
+  BLUE: 10.0,
   GREEN: 7.5,
-  YELLOW: 5.5,
-  RED: 3.5,
+  YELLOW: 5.0,
+  RED: 2.5,
 };
 
 export const GRADE_LABEL_ES: Record<GradeKey, string> = {
-  BLUE: 'Sobresaliente',
-  GREEN: 'Notable',
-  YELLOW: 'Suficiente',
-  RED: 'Insuficiente',
+  RED: 'Discrepancia',
+  YELLOW: 'Reproductivo',
+  GREEN: 'Autónomo',
+  BLUE: 'Transferencia',
 };
 
 export const GRADE_COLOR_CLASS: Record<GradeKey, string> = {
@@ -24,9 +24,14 @@ export const GRADE_COLOR_CLASS: Record<GradeKey, string> = {
 };
 
 export function gradeKeyFromNumeric(avg: number): GradeKey {
-  if (avg >= 8.5) return 'BLUE';
-  if (avg >= 6.5) return 'GREEN';
-  if (avg >= 4.5) return 'YELLOW';
+  // Use midpoints between the configured level values.
+  const tBlue = (GRADE_VALUE.BLUE + GRADE_VALUE.GREEN) / 2;
+  const tGreen = (GRADE_VALUE.GREEN + GRADE_VALUE.YELLOW) / 2;
+  const tYellow = (GRADE_VALUE.YELLOW + GRADE_VALUE.RED) / 2;
+
+  if (avg >= tBlue) return 'BLUE';
+  if (avg >= tGreen) return 'GREEN';
+  if (avg >= tYellow) return 'YELLOW';
   return 'RED';
 }
 

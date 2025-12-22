@@ -18,10 +18,9 @@ import { Teacher, Student, EvaluationEntry, Classroom, Competencia, Triangulatio
 import { storage } from '../utils/storage';
 import Header from '../components/Header';
 import { listenAllGrades } from '../utils/firestore/grades';
-import { listenCompetencias } from '../utils/firestore/competencias';
+import { listenCompetencias, seedCompetenciasIfEmpty } from '../utils/firestore/competencias';
 import { makeStudentCompetencyKey, useTriangulationGrades } from '../hooks/useTriangulationGrades';
 import { GRADE_COLOR_CLASS, GRADE_LABEL_ES } from '../utils/triangulation/gradeScale';
-import { generateTriangulationReport } from '../utils/triangulation/reportText';
 
 // Register ChartJS components
 ChartJS.register(
@@ -50,7 +49,6 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
   const [selectedClassroomIds, setSelectedClassroomIds] = useState<string[]>(teacher.classroomIds || []);
   const [studentQuery, setStudentQuery] = useState('');
   const [triGrades, setTriGrades] = useState<TriangulationGrade[]>([]);
-  const [reportStudentId, setReportStudentId] = useState<string>('');
   const [stats, setStats] = useState({
     totalStudents: 0,
     averageGrade: 0,
@@ -67,6 +65,11 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
       setCompetencias(storage.getCompetencias());
       return;
     }
+
+    void seedCompetenciasIfEmpty(teacher.workspaceId, storage.getCompetencias()).catch(() => {
+      // ignore; may be offline
+    });
+
     const unsub = listenCompetencias(teacher.workspaceId, (items) => setCompetencias(items));
     return () => unsub();
   }, [teacher.workspaceId]);
@@ -143,25 +146,6 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
     competencias,
     grades: filteredTriGrades,
   });
-
-  const reportText = useMemo(() => {
-    const sid = reportStudentId || (filteredStudents[0]?.id ?? '');
-    if (!sid) return '';
-    const s = filteredStudents.find(x => x.id === sid);
-    if (!s) return '';
-    const keyMap = new Map<string, any>();
-    for (const c of competencias) {
-      const k = makeStudentCompetencyKey(s.id, c.id);
-      const v = tri.competencyAvgKey.get(k);
-      if (v) keyMap.set(k, v);
-    }
-    return generateTriangulationReport({
-      studentName: `${s.firstName} ${s.lastName}`,
-      competencias,
-      competencyKeys: keyMap,
-      studentId: s.id,
-    });
-  }, [reportStudentId, filteredStudents, competencias, tri.competencyAvgKey]);
 
   const studentEvalStats = useMemo(() => {
     const map = new Map<string, { count: number; sum: number; lastDate: number | null }>();
@@ -411,7 +395,7 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
           <div className="card">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-gray-600 mb-1">Notable o Superior</p>
+                <p className="text-sm text-gray-600 mb-1">Autónomo o Transferencia</p>
                 <p className="text-3xl font-bold text-gray-900">{stats.studentsAbove7}</p>
               </div>
               <div className="bg-yellow-100 p-3 rounded-lg">
@@ -500,7 +484,7 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
                           <td className="py-2.5 pr-3 text-gray-700">{es?.count || 0}</td>
                           <td className="py-2.5 pr-3 text-gray-700">{last}</td>
                           <td className="py-2.5 pr-4">
-                            <button className="btn-secondary" onClick={() => navigate(`/student/${s.id}`)}>
+                            <button className="btn-secondary" onClick={() => navigate(`/classroom/${s.classroomId}/student/${s.id}`)}>
                               Ver
                             </button>
                           </td>
@@ -569,11 +553,8 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
                           );
                         })}
                         <td className="py-2.5 pr-4">
-                          <button
-                            className="btn-secondary"
-                            onClick={() => setReportStudentId(s.id)}
-                          >
-                            Informe
+                          <button className="btn-secondary" onClick={() => navigate(`/classroom/${s.classroomId}/student/${s.id}`)}>
+                            Ver informe
                           </button>
                         </td>
                       </tr>
@@ -585,32 +566,6 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
             </div>
           )}
         </div>
-
-        {teacher.workspaceId && filteredStudents.length > 0 && (
-          <div className="card mt-6">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Generador de informe (Triangulación)</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div className="md:col-span-1">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Estudiante</label>
-                <select
-                  className="input-field"
-                  value={reportStudentId || filteredStudents[0].id}
-                  onChange={(e) => setReportStudentId(e.target.value)}
-                >
-                  {filteredStudents.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.lastName}, {s.firstName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-2">Texto</label>
-                <textarea className="input-field" rows={6} readOnly value={reportText} />
-              </div>
-            </div>
-          </div>
-        )}
       </main>
     </div>
   );

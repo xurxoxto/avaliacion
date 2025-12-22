@@ -43,7 +43,7 @@ Successfully rebuilt the entire evaluation system from scratch using modern web 
 
 ### 4. Student Detail Page
 - Student profile with key metrics
-- Competencias clave dropdown (C1-C7)
+- Competencias clave dropdown (CCL, CP, STEM, CD, CPSAA, CC, CE, CCEC)
 - Rating system (1-10 with slider)
 - Observation text area
 - File upload for evidence

@@ -226,13 +226,14 @@ El archivo `server/database/schema.sql` contiene:
 - Datos iniciales de competencias clave
 
 ### Competencias Clave (Decreto 155/2021)
-1. **C1**: Comunicación Lingüística
-2. **C2**: Competencia Matemática
-3. **C3**: Competencia Digital
-4. **C4**: Aprender a Aprender
-5. **C5**: Competencias Sociales y Cívicas
-6. **C6**: Sentido de Iniciativa y Espíritu Emprendedor
-7. **C7**: Conciencia y Expresiones Culturales
+1. **CCL**: Competencia en comunicación lingüística
+2. **CP**: Competencia plurilingüe
+3. **STEM**: Competencia matemática y competencia en ciencia, tecnología e ingeniería
+4. **CD**: Competencia digital
+5. **CPSAA**: Competencia personal, social y de aprender a aprender
+6. **CC**: Competencia ciudadana
+7. **CE**: Competencia emprendedora
+8. **CCEC**: Competencia en conciencia y expresión culturales
 
 ## 🔌 API Endpoints
 
@@ -258,6 +259,26 @@ El archivo `server/database/schema.sql` contiene:
 - `GET /api/evaluations/:id` - Obtener evaluación específica
 - `DELETE /api/evaluations/:id` - Eliminar evaluación
 - `GET /api/evaluations/stats/summary` - Obtener estadísticas
+
+### Registrar Evaluación (PostgreSQL)
+
+- `POST /api/registrar-evaluacion` - Inserta una evaluación en PostgreSQL y actualiza `progreso_descriptores` según las `vinculaciones` (`TEXT[]`) de la competencia específica.
+
+Body JSON:
+
+```json
+{
+  "alumnoId": "11111111-1111-4111-8111-111111111111",
+  "competenciaEspecificaId": "MAT_CE1",
+  "nota": 7.5,
+  "evidencia": "opcional",
+  "decisionDocente": "opcional",
+  "fecha": "2025-12-22T10:00:00.000Z",
+  "nivelLogro": "AUTONOMO"
+}
+```
+
+Nota: Si usas el trigger de [server/database/init.sql](server/database/init.sql) que también actualiza `progreso_descriptores`, este endpoint establece `SET LOCAL app.skip_progreso_trigger = '1'` para evitar doble conteo.
 
 ## 🎯 Características Futuras
 

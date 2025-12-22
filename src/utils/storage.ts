@@ -1,5 +1,5 @@
 import { Classroom, Student, EvaluationEntry, Teacher, Competencia } from '../types';
-import { COMPETENCIAS_CLAVE } from '../data/competencias';
+import { COMPETENCIAS_CLAVE, withDefaultLomloeSubCompetencias } from '../data/competencias';
 
 export const STORAGE_KEYS = {
   CLASSROOMS: 'avaliacion_classrooms',
@@ -178,7 +178,35 @@ export const storage = {
       const data = localStorage.getItem(STORAGE_KEYS.COMPETENCIAS);
       if (!data) return COMPETENCIAS_CLAVE;
       const parsed = JSON.parse(data);
-      return Array.isArray(parsed) ? parsed : COMPETENCIAS_CLAVE;
+
+      if (!Array.isArray(parsed)) return COMPETENCIAS_CLAVE;
+
+      // One-time migration: legacy defaults used C1..C7. If local data still matches that
+      // default shape, replace it with the current LOMLOE set.
+      const legacyCodes = new Set(['C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'C7']);
+      const legacyIds = new Set(['c1', 'c2', 'c3', 'c4', 'c5', 'c6', 'c7']);
+      const looksLikeLegacyDefaults =
+        parsed.length === 7 &&
+        parsed.every((c: any) => legacyIds.has(String(c?.id ?? '')) && legacyCodes.has(String(c?.code ?? '')));
+
+      if (looksLikeLegacyDefaults) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.COMPETENCIAS, JSON.stringify(COMPETENCIAS_CLAVE));
+        } catch {
+          // ignore
+        }
+        return COMPETENCIAS_CLAVE;
+      }
+
+      const enriched = withDefaultLomloeSubCompetencias(parsed as Competencia[]);
+      if (enriched !== parsed) {
+        try {
+          localStorage.setItem(STORAGE_KEYS.COMPETENCIAS, JSON.stringify(enriched));
+        } catch {
+          // ignore
+        }
+      }
+      return enriched as Competencia[];
     } catch (error) {
       console.error('Error loading competencias:', error);
       return COMPETENCIAS_CLAVE;

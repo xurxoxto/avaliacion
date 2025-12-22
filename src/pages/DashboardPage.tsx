@@ -1,13 +1,15 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Users, BarChart3, ListTree, Search } from 'lucide-react';
+import { Plus, Users, BarChart3, ListTree } from 'lucide-react';
 import { Teacher, Classroom, Student } from '../types';
 import { storage } from '../utils/storage';
-import { useRemoteRefresh } from '../utils/useRemoteRefresh';
+import { listenClassrooms, createClassroom, deleteClassroom } from '../utils/firestore/classrooms';
+import { listenStudents } from '../utils/firestore/students';
+import { deleteGradesForStudents } from '../utils/firestore/grades';
+import { deleteTriangulationObservationsForStudents } from '../utils/firestore/triangulationObservations';
 import Header from '../components/Header';
 import ClassroomCard from '../components/ClassroomCard';
 import CreateClassroomModal from '../components/CreateClassroomModal';
-import StudentCard from '../components/StudentCard';
 
 interface DashboardPageProps {
   teacher: Teacher;
@@ -17,46 +19,62 @@ interface DashboardPageProps {
 export default function DashboardPage({ teacher, onLogout }: DashboardPageProps) {
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [studentQuery, setStudentQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
   const navigate = useNavigate();
 
-  const loadClassrooms = () => {
-    const allClassrooms = storage.getClassrooms();
-    setClassrooms(allClassrooms);
-    setStudents(storage.getStudents());
-  };
-
   useEffect(() => {
-    loadClassrooms();
-  }, []);
+    if (!teacher.workspaceId) return;
 
-  useRemoteRefresh(loadClassrooms);
+    const unsubClassrooms = listenClassrooms(teacher.workspaceId, (remoteClassrooms) => {
+      setClassrooms(remoteClassrooms);
+      storage.saveClassrooms(remoteClassrooms);
+    });
 
-  const filteredStudents = studentQuery.trim()
-    ? students.filter(s => {
-        const q = studentQuery.trim().toLowerCase();
-        return (
-          `${s.firstName} ${s.lastName}`.toLowerCase().includes(q) ||
-          `${s.lastName} ${s.firstName}`.toLowerCase().includes(q) ||
-          String(s.listNumber).includes(q)
-        );
-      })
-    : [];
+    const unsubStudents = listenStudents(teacher.workspaceId, (remoteStudents) => {
+      setStudents(remoteStudents);
+      storage.saveStudents(remoteStudents);
+    });
 
-  const handleCreateClassroom = (classroom: Omit<Classroom, 'id' | 'createdAt' | 'updatedAt' | 'studentCount'>) => {
-    const newClassroom: Classroom = {
-      ...classroom,
-      id: Date.now().toString(),
+    return () => {
+      unsubClassrooms();
+      unsubStudents();
+    };
+  }, [teacher.workspaceId]);
+
+  const handleCreateClassroom = async (classroomData: Omit<Classroom, 'id' | 'createdAt' | 'updatedAt' | 'studentCount'>) => {
+    const newClassroom: Omit<Classroom, 'id' | 'createdAt' | 'updatedAt'> = {
+      ...classroomData,
       studentCount: 0,
-      createdAt: new Date(),
-      updatedAt: new Date(),
     };
 
-    const updatedClassrooms = [...classrooms, newClassroom];
-    storage.saveClassrooms(updatedClassrooms);
-    setClassrooms(updatedClassrooms);
+    if (!teacher.workspaceId) return;
+    try {
+      await createClassroom(teacher.workspaceId, newClassroom);
+    } catch (error) {
+      console.error("Error creating classroom:", error);
+      alert("Hubo un error al crear el aula. Por favor, inténtalo de nuevo.");
+    }
+    
     setShowCreateModal(false);
+  };
+
+  const handleDeleteClassroom = async (classroomId: string) => {
+    if (window.confirm('¿Estás seguro de que quieres eliminar esta aula y todos sus estudiantes? Esta acción no se puede deshacer.')) {
+      if (!teacher.workspaceId) return;
+      try {
+        const removedStudentIds = students.filter(s => s.classroomId === classroomId).map(s => s.id);
+        if (removedStudentIds.length > 0) {
+          await Promise.all([
+            deleteGradesForStudents(teacher.workspaceId, removedStudentIds),
+            deleteTriangulationObservationsForStudents(teacher.workspaceId, removedStudentIds),
+          ]);
+        }
+        await deleteClassroom(teacher.workspaceId, classroomId);
+      } catch (error) {
+        console.error("Error deleting classroom:", error);
+        alert("Hubo un error al eliminar el aula. Por favor, inténtalo de nuevo.");
+      }
+    }
   };
 
   return (
@@ -89,75 +107,49 @@ export default function DashboardPage({ teacher, onLogout }: DashboardPageProps)
               className="btn-primary flex items-center justify-center gap-2"
             >
               <Plus className="w-5 h-5" />
-              Nueva Aula
+              Crear Aula
             </button>
           </div>
         </div>
 
-        <div className="card mb-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-4">Buscar estudiantes</h2>
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="text"
-              value={studentQuery}
-              onChange={(e) => setStudentQuery(e.target.value)}
-              className="input-field pl-10"
-              placeholder="Buscar por nombre, apellidos o número de lista..."
-            />
-          </div>
-
-          {studentQuery.trim() && (
-            <div className="mt-4">
-              {filteredStudents.length === 0 ? (
-                <p className="text-sm text-gray-600">No se encontraron estudiantes.</p>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredStudents.slice(0, 12).map((s) => (
-                    <StudentCard key={s.id} student={s} onClick={() => navigate(`/student/${s.id}`)} />
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        {classrooms.length === 0 ? (
-          <div className="text-center py-16">
-            <Users className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-            <h3 className="text-xl font-semibold text-gray-700 mb-2">
-              No hay aulas creadas
-            </h3>
-            <p className="text-gray-500 mb-6">
-              Comienza creando tu primera aula para gestionar estudiantes
-            </p>
-            <button
-              onClick={() => setShowCreateModal(true)}
-              className="btn-primary inline-flex items-center gap-2"
-            >
-              <Plus className="w-5 h-5" />
-              Crear Primera Aula
-            </button>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {classrooms.map((classroom) => (
+        {classrooms.length > 0 ? (
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {classrooms.map(classroom => (
               <ClassroomCard
                 key={classroom.id}
                 classroom={classroom}
                 onClick={() => navigate(`/classroom/${classroom.id}`)}
+                onDelete={() => handleDeleteClassroom(classroom.id)}
               />
             ))}
           </div>
+        ) : (
+          <div className="text-center py-12 border-2 border-dashed border-gray-300 rounded-lg">
+            <Users className="mx-auto h-12 w-12 text-gray-400" />
+            <h3 className="mt-2 text-sm font-medium text-gray-900">No hay aulas</h3>
+            <p className="mt-1 text-sm text-gray-500">
+              Empieza por crear una nueva aula para tus estudiantes.
+            </p>
+            <div className="mt-6">
+              <button
+                onClick={() => setShowCreateModal(true)}
+                type="button"
+                className="btn-primary inline-flex items-center gap-2"
+              >
+                <Plus className="w-5 h-5" />
+                Crear Aula
+              </button>
+            </div>
+          </div>
+        )}
+
+        {showCreateModal && (
+          <CreateClassroomModal
+            onClose={() => setShowCreateModal(false)}
+            onCreate={handleCreateClassroom}
+          />
         )}
       </main>
-
-      {showCreateModal && (
-        <CreateClassroomModal
-          onClose={() => setShowCreateModal(false)}
-          onCreate={handleCreateClassroom}
-        />
-      )}
     </div>
   );
 }

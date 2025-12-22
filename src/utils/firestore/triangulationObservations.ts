@@ -10,9 +10,15 @@ import {
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
 import type { GradeKey, TriangulationObservation } from '../../types';
-import { GRADE_VALUE } from '../triangulation/gradeScale';
+import { GRADE_KEYS, GRADE_VALUE } from '../triangulation/gradeScale';
+
+function isGradeKey(v: any): v is GradeKey {
+  return typeof v === 'string' && (GRADE_KEYS as string[]).includes(v);
+}
 
 function fromDoc(id: string, workspaceId: string, data: any): TriangulationObservation {
+  const rawKey = data?.gradeKey;
+  const gradeKey: GradeKey = isGradeKey(rawKey) ? rawKey : 'YELLOW';
   return {
     id,
     workspaceId,
@@ -20,8 +26,8 @@ function fromDoc(id: string, workspaceId: string, data: any): TriangulationObser
     projectId: data?.projectId,
     competenciaId: data?.competenciaId,
     subCompetenciaId: data?.subCompetenciaId || undefined,
-    gradeKey: data?.gradeKey,
-    numericValue: typeof data?.numericValue === 'number' ? data.numericValue : GRADE_VALUE[data?.gradeKey as GradeKey],
+    gradeKey,
+    numericValue: GRADE_VALUE[gradeKey],
     observation: data?.observation ?? '',
     teacherId: data?.teacherId || undefined,
     teacherName: data?.teacherName || undefined,
