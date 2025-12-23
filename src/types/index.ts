@@ -62,6 +62,70 @@ export interface EvaluationEntry {
 
 export type GradeKey = 'BLUE' | 'GREEN' | 'YELLOW' | 'RED';
 
+export type LearningSituationType = 'PROJECT' | 'TASK' | 'CHALLENGE';
+
+export interface LearningSituation {
+  id: string;
+  title: string;
+  description: string;
+  type: LearningSituationType;
+  /** Denormalized list of competency IDs this situation contributes to. */
+  relatedCompetencyIds: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TaskCompetencyLink {
+  competenciaId: string;
+  /** Optional: link to a specific sub-competencia for precision. */
+  subCompetenciaId?: string;
+  /** Manual weight (0-100). Interpreted within the task. */
+  weight: number;
+}
+
+export interface LearningTask {
+  id: string;
+  learningSituationId: string;
+  title: string;
+  description: string;
+  /** Weighted links to competencias/subcompetencias (manual). */
+  links: TaskCompetencyLink[];
+  /** Optional: if set, task is assigned only to these students (subset across classrooms). */
+  assignedStudentIds?: string[];
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TaskEvaluation {
+  id: string;
+  studentId: string;
+  learningSituationId: string;
+  taskId: string;
+  rating: GradeKey;
+  numericalValue: number;
+  /** Copied at write time from task.links for denormalization. */
+  links: TaskCompetencyLink[];
+  observation?: string;
+  /** Author information (for multi-teacher collaboration). */
+  teacherId?: string;
+  teacherName?: string;
+  teacherEmail?: string;
+  timestamp: Date;
+  updatedAt: Date;
+}
+
+export interface SituationEvaluation {
+  id: string;
+  studentId: string;
+  learningSituationId: string;
+  rating: GradeKey;
+  numericalValue: number;
+  relatedCompetencyIds: string[];
+  observation?: string;
+  timestamp: Date;
+  updatedAt: Date;
+}
+
 export interface Project {
   id: string;
   name: string;

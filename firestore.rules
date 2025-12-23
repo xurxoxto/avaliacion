@@ -26,6 +26,9 @@ service cloud.firestore {
       allow read, write: if inWorkspace(workspaceId);
 
       // Subcollections (Option B)
+      // This includes (among others):
+      // - /workspaces/{workspaceId}/learningSituations/{situationId}/tasks/{taskId}
+      // - /workspaces/{workspaceId}/taskEvaluations/{evaluationId}
       match /{document=**} {
         allow read, write: if inWorkspace(workspaceId);
       }

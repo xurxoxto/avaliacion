@@ -5,6 +5,9 @@ import ClassroomPage from './pages/ClassroomPage';
 import StudentPage from './pages/StudentPage';
 import AnalyticsPage from './pages/AnalyticsPage';
 import CompetenciasPage from './pages/CompetenciasPage';
+import LearningSituationsPage from './pages/LearningSituationsPage';
+import QuickEvaluationPage from './pages/QuickEvaluationPage';
+import LearningSituationDetailPage from './pages/LearningSituationDetailPage';
 import LoginPage from './pages/LoginPage';
 import { startCloudSync, stopCloudSync } from './utils/cloudSync';
 import { Teacher } from './types';
@@ -81,6 +84,15 @@ function App() {
             <Route path="/" element={<DashboardPage teacher={teacher} onLogout={handleLogout} />} />
             <Route path="/classroom/:id" element={<ClassroomPage teacher={teacher} onLogout={handleLogout} />} />
             <Route path="/classroom/:classroomId/student/:id" element={<StudentPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route path="/learning-situations" element={<LearningSituationsPage teacher={teacher} onLogout={handleLogout} />} />
+            <Route
+              path="/learning-situations/:learningSituationId"
+              element={<LearningSituationDetailPage teacher={teacher} onLogout={handleLogout} />}
+            />
+            <Route
+              path="/learning-situations/:learningSituationId/evaluate"
+              element={<QuickEvaluationPage teacher={teacher} onLogout={handleLogout} />}
+            />
             <Route path="/analytics" element={<AnalyticsPage teacher={teacher} onLogout={handleLogout} />} />
             <Route path="/competencias" element={<CompetenciasPage teacher={teacher} onLogout={handleLogout} />} />
             <Route path="*" element={<Navigate to="/" />} />

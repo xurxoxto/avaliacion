@@ -59,6 +59,11 @@ npm run dev
 npm run server
 ```
 
+**Ambos (recomendado, un solo comando)**
+```bash
+npm run dev:full
+```
+
 ### Modo Producción
 
 **1. Instalar dependencias**

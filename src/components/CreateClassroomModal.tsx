@@ -4,12 +4,15 @@ import { Classroom } from '../types';
 
 interface CreateClassroomModalProps {
   onClose: () => void;
-  onCreate: (classroom: Omit<Classroom, 'id' | 'createdAt' | 'updatedAt' | 'studentCount'>) => void;
+  onSubmit: (classroom: Pick<Classroom, 'name' | 'grade'>) => void;
+  initial?: Pick<Classroom, 'name' | 'grade'>;
+  title?: string;
+  submitLabel?: string;
 }
 
-export default function CreateClassroomModal({ onClose, onCreate }: CreateClassroomModalProps) {
-  const [name, setName] = useState('');
-  const [grade, setGrade] = useState('');
+export default function CreateClassroomModal({ onClose, onSubmit, initial, title, submitLabel }: CreateClassroomModalProps) {
+  const [name, setName] = useState(initial?.name ?? '');
+  const [grade, setGrade] = useState(initial?.grade ?? '');
   const [error, setError] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -26,17 +29,14 @@ export default function CreateClassroomModal({ onClose, onCreate }: CreateClassr
       return;
     }
 
-    onCreate({
-      name: name.trim(),
-      grade: grade.trim(),
-    });
+    onSubmit({ name: name.trim(), grade: grade.trim() });
   };
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
       <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
         <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold text-gray-900">Nueva Aula</h2>
+          <h2 className="text-2xl font-bold text-gray-900">{title || 'Nueva Aula'}</h2>
           <button
             onClick={onClose}
             className="text-gray-400 hover:text-gray-600 transition-colors"
@@ -100,7 +100,7 @@ export default function CreateClassroomModal({ onClose, onCreate }: CreateClassr
               type="submit"
               className="btn-primary flex-1"
             >
-              Crear Aula
+              {submitLabel || 'Crear Aula'}
             </button>
           </div>
         </form>

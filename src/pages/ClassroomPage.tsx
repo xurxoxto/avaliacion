@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Search, User, Trash2 } from 'lucide-react';
+import { Plus, Search, User, Trash2 } from 'lucide-react';
 import { Teacher, Classroom, Student } from '../types';
 import { storage } from '../utils/storage';
 import Header from '../components/Header';
 import StudentCard from '../components/StudentCard';
 import CreateStudentModal from '../components/CreateStudentModal';
+import CreateClassroomModal from '../components/CreateClassroomModal';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { deleteGradesForStudents } from '../utils/firestore/grades';
 import { deleteTriangulationObservationsForStudents } from '../utils/firestore/triangulationObservations';
 import { listenStudentsByClassroom, createStudent, deleteStudent } from '../utils/firestore/students';
-import { listenClassrooms, deleteClassroom } from '../utils/firestore/classrooms';
+import { listenClassrooms, deleteClassroom, updateClassroom } from '../utils/firestore/classrooms';
 import { doc, increment, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
 
@@ -27,6 +28,7 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showEditClassroomModal, setShowEditClassroomModal] = useState(false);
 
   useEffect(() => {
     if (!id) return;
@@ -69,10 +71,15 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     setFilteredStudents(filtered);
   };
 
-  const handleCreateStudent = async (studentData: Omit<Student, 'id' | 'createdAt' | 'updatedAt'>) => {
+  const handleCreateStudent = async (form: Pick<Student, 'firstName' | 'lastName' | 'listNumber'>) => {
     if (teacher.workspaceId && id) {
       try {
-        await createStudent(teacher.workspaceId, studentData);
+        await createStudent(teacher.workspaceId, {
+          ...form,
+          classroomId: id,
+          progress: 0,
+          averageGrade: 0,
+        });
         // After creating the student, update the classroom's student count
         const classroomRef = doc(db, 'workspaces', teacher.workspaceId, 'classrooms', id);
         await updateDoc(classroomRef, {
@@ -85,6 +92,17 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
       }
     }
     setShowCreateModal(false);
+  };
+
+  const handleEditClassroom = async (form: Pick<Classroom, 'name' | 'grade'>) => {
+    if (!teacher.workspaceId || !id) return;
+    try {
+      await updateClassroom(teacher.workspaceId, id, { name: form.name, grade: form.grade });
+    } catch (error) {
+      console.error('Error updating classroom:', error);
+      alert('Hubo un error al actualizar el aula. Por favor, inténtalo de nuevo.');
+    }
+    setShowEditClassroomModal(false);
   };
 
   const handleDeleteStudent = async (studentId: string) => {
@@ -154,13 +172,6 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
         )}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-6">
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigate('/')}
-              className="btn-secondary flex items-center justify-center gap-2"
-            >
-              <ArrowLeft className="w-5 h-5" />
-              Volver al Dashboard
-            </button>
             <div>
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900">{classroom.name}</h1>
               <p className="text-gray-600 mt-2">
@@ -169,6 +180,13 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
             </div>
           </div>
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
+            <button
+              onClick={() => setShowEditClassroomModal(true)}
+              className="btn-secondary flex items-center justify-center gap-2"
+              title="Editar aula"
+            >
+              Editar Aula
+            </button>
             <button
               onClick={handleDeleteClassroom}
               className="btn-secondary flex items-center justify-center gap-2"
@@ -195,7 +213,7 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="input-field pl-10"
-              placeholder="Buscar por nombre o número..."
+              placeholder="Buscar estudiantes por nombre o número…"
             />
           </div>
         </div>
@@ -237,11 +255,20 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
 
       {showCreateModal && (
         <CreateStudentModal
-          classroomId={id!}
           onClose={() => setShowCreateModal(false)}
-          onCreate={handleCreateStudent}
+          onSubmit={handleCreateStudent}
         />
       )}
+
+      {showEditClassroomModal && classroom ? (
+        <CreateClassroomModal
+          onClose={() => setShowEditClassroomModal(false)}
+          onSubmit={handleEditClassroom}
+          initial={{ name: classroom.name, grade: classroom.grade }}
+          title="Editar Aula"
+          submitLabel="Guardar"
+        />
+      ) : null}
     </div>
   );
 }

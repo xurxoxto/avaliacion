@@ -6,7 +6,6 @@ import { storage } from '../utils/storage';
 import type { Competencia, SubCompetencia, Teacher } from '../types';
 import { useRemoteRefresh } from '../utils/useRemoteRefresh';
 import {
-  getRelatedLomloeCompetenceCodes,
   LOMLOE_COMPETENCE_CODES,
   LOMLOE_RELATIONSHIP_SOURCE_URL,
   normalizeCompetenceCode,
@@ -29,7 +28,10 @@ function newId(prefix: string) {
 
 export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPageProps) {
   const navigate = useNavigate();
-  const [competencias, setCompetencias] = useState<Competencia[]>([]);
+  const [competencias, setCompetencias] = useState<Competencia[]>(() => storage.getCompetencias());
+  const [editingCompetenciaId, setEditingCompetenciaId] = useState<string>('');
+  const [newSubByCompetenciaId, setNewSubByCompetenciaId] = useState<Record<string, { code: string; name: string; description: string }>>({});
+  const compRefs = useRef<Map<string, HTMLDivElement | null>>(new Map());
   const saveTimersRef = useRef<Map<string, number>>(new Map());
   const inflightRef = useRef<Set<string>>(new Set());
   const dirtyRef = useRef<Map<string, Competencia>>(new Map());
@@ -87,16 +89,24 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
   }, [teacher.workspaceId]);
 
   useEffect(() => {
-    if (!teacher.workspaceId) {
-      setCompetencias(storage.getCompetencias());
-      return;
-    }
+    // Always show a local catalog immediately; then upgrade to Firestore if available.
+    setCompetencias(storage.getCompetencias());
+
+    if (!teacher.workspaceId) return;
 
     void seedCompetenciasIfEmpty(teacher.workspaceId, storage.getCompetencias()).catch(() => {
       // ignore; may be offline
     });
 
-    const unsub = listenCompetencias(teacher.workspaceId, (items) => setCompetencias(items));
+    const unsub = listenCompetencias(teacher.workspaceId, (items) => {
+      // If Firestore is empty or unreachable, keep local defaults.
+      if (!items || items.length === 0) {
+        setCompetencias(storage.getCompetencias());
+        return;
+      }
+      setCompetencias(items);
+    });
+
     return () => {
       unsub();
       // Cancel any pending local timers
@@ -106,7 +116,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
       dirtyRef.current.clear();
       setPendingCount(0);
     };
-  }, []);
+  }, [teacher.workspaceId]);
 
   useRemoteRefresh(() => {
     if (!teacher.workspaceId) setCompetencias(storage.getCompetencias());
@@ -137,6 +147,16 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
       return normalizeCompetenceCode(a.code).localeCompare(normalizeCompetenceCode(b.code));
     });
   }, [competencias, hasFullLomloeKeySet]);
+
+  const scrollToCompetencia = (competenciaId: string) => {
+    const el = compRefs.current.get(competenciaId);
+    if (!el) return;
+    try {
+      el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch {
+      el.scrollIntoView();
+    }
+  };
 
   const queueUpsert = (competencia: Competencia) => {
     if (!teacher.workspaceId) return;
@@ -214,23 +234,23 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
   const addSubCompetencia = (competenciaId: string) => {
     const comp = competenciaById.get(competenciaId);
     if (!comp) return;
-
-    const name = prompt('Nombre de la sub-competencia');
-    if (!name || !name.trim()) return;
-
-    const code = prompt('Código (opcional)');
-    const desc = prompt('Descripción (opcional)');
+    const draft = newSubByCompetenciaId[competenciaId] || { code: '', name: '', description: '' };
+    const name = (draft.name || '').trim();
+    if (!name) {
+      alert('El nombre de la subcompetencia es requerido');
+      return;
+    }
 
     const sub: SubCompetencia = {
       id: newId('sub'),
-      name: name.trim(),
-      code: code?.trim() || undefined,
-      description: desc?.trim() || undefined,
-      weight: 0,
+      name,
+      code: (draft.code || '').trim() ? (draft.code || '').trim() : undefined,
+      description: (draft.description || '').trim() ? (draft.description || '').trim() : undefined,
     };
 
     const nextSubs = [...(comp.subCompetencias || []), sub];
     updateCompetencia(competenciaId, { subCompetencias: nextSubs });
+    setNewSubByCompetenciaId((prev) => ({ ...prev, [competenciaId]: { code: '', name: '', description: '' } }));
   };
 
   const updateSubCompetencia = (competenciaId: string, subId: string, patch: Partial<SubCompetencia>) => {
@@ -263,8 +283,27 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
 
         <div className="mb-8">
           <h1 className="text-3xl font-bold text-gray-900">Competencias</h1>
-          <p className="text-gray-600 mt-2">Edita competencias y añade sub-competencias.</p>
-          <p className="text-sm text-gray-500 mt-2">Los pesos se expresan en porcentaje (0–100).</p>
+          <p className="text-gray-600 mt-2">Lista editable de competencias y subcompetencias.</p>
+          <p className="text-sm text-gray-500 mt-2">El código funciona como etiqueta (p.ej. CCL).</p>
+
+          {orderedCompetencias.length > 0 ? (
+            <div className="mt-4">
+              <div className="text-xs text-gray-500 mb-2">Ir a competencia</div>
+              <div className="flex flex-wrap gap-2">
+                {orderedCompetencias.map((c) => (
+                  <button
+                    key={c.id}
+                    type="button"
+                    className={editingCompetenciaId === c.id ? 'btn-primary' : 'btn-secondary'}
+                    onClick={() => scrollToCompetencia(c.id)}
+                    title={c.name}
+                  >
+                    {(c.code || '').trim() || '—'}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : null}
 
           {hasFullLomloeKeySet && (
             <p className="text-sm text-gray-600 mt-2">
@@ -331,133 +370,220 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
 
         <div className="space-y-6">
           {orderedCompetencias.map((comp) => (
-            <div key={comp.id} className="card">
-              <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-3">
-                <div className="flex-1 grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
-                  <input
-                    className="input-field h-10 md:col-span-2 md:justify-self-start px-3 py-2 text-sm font-semibold tracking-wide uppercase"
-                    value={comp.code}
-                    onChange={(e) => updateCompetencia(comp.id, { code: e.target.value })}
-                    aria-label="Código"
-                  />
-                  <input
-                    className="input-field h-10 md:col-span-6"
-                    value={comp.name}
-                    onChange={(e) => updateCompetencia(comp.id, { name: e.target.value })}
-                    aria-label="Nombre"
-                  />
-                  <div className="relative md:col-span-2">
-                    <input
-                      className="input-field h-10 w-28 md:w-full md:justify-self-start px-3 py-2 pr-9 text-sm text-right tabular-nums"
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={1}
-                      value={typeof comp.weight === 'number' ? comp.weight : 0}
-                      onChange={(e) => updateCompetencia(comp.id, { weight: Number(e.target.value) })}
-                      aria-label="Peso (%)"
-                      placeholder="Peso"
-                      title="Peso (%) para la nota final"
-                    />
-                    <span className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-500">%</span>
+            <div
+              key={comp.id}
+              className="card"
+              ref={(el) => {
+                compRefs.current.set(comp.id, el);
+              }}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700 uppercase tracking-wide">
+                      {comp.code}
+                    </span>
+                    <h3 className="text-lg font-bold text-gray-900 truncate">{comp.name}</h3>
                   </div>
-                  <button
-                    className="btn-secondary flex items-center justify-center gap-2 h-10 md:col-span-2"
-                    onClick={() => addSubCompetencia(comp.id)}
-                  >
-                    <Plus className="w-5 h-5" />
-                    Sub-competencia
-                  </button>
-                  <textarea
-                    className="input-field md:col-span-12"
-                    rows={2}
-                    value={comp.description}
-                    onChange={(e) => updateCompetencia(comp.id, { description: e.target.value })}
-                    aria-label="Descripción"
-                  />
-
-                  {hasFullLomloeKeySet && getRelatedLomloeCompetenceCodes(comp.code).length > 0 && (
-                    <div className="md:col-span-12">
-                      <div className="text-xs text-gray-500 mb-2">Relacionada con</div>
-                      <div className="flex flex-wrap gap-2">
-                        {getRelatedLomloeCompetenceCodes(comp.code).map((code) => (
-                          <span
-                            key={code}
-                            className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700"
-                          >
-                            {code}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
+                  {comp.description ? <p className="text-sm text-gray-600 mt-2 whitespace-pre-wrap">{comp.description}</p> : null}
                 </div>
 
-                <button
-                  className="btn-secondary flex items-center justify-center gap-2 self-end md:self-start"
-                  onClick={() => deleteCompetencia(comp.id)}
-                  title="Eliminar competencia"
-                >
-                  <Trash2 className="w-5 h-5" />
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="btn-secondary h-10"
+                    onClick={() => setEditingCompetenciaId((prev) => (prev === comp.id ? '' : comp.id))}
+                    title="Editar"
+                  >
+                    {editingCompetenciaId === comp.id ? 'Cerrar' : 'Editar'}
+                  </button>
+                  <button
+                    className="btn-secondary h-10 px-3"
+                    onClick={() => deleteCompetencia(comp.id)}
+                    title="Eliminar competencia"
+                  >
+                    <Trash2 className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
 
-              <div className="mt-6">
-                <h3 className="text-sm font-semibold text-gray-900 mb-3">Sub-competencias</h3>
-                {(comp.subCompetencias && comp.subCompetencias.length > 0) ? (
-                  <div className="space-y-3">
-                    {comp.subCompetencias.map((sub) => (
-                      <div key={sub.id} className="border border-gray-200 rounded-lg p-4">
-                        <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
-                          <input
-                            className="input-field h-10 md:col-span-2 md:justify-self-start px-3 py-2 text-sm font-semibold tracking-wide uppercase"
-                            value={sub.code || ''}
-                            onChange={(e) => updateSubCompetencia(comp.id, sub.id, { code: e.target.value || undefined })}
-                            placeholder="Código (opcional)"
-                          />
-                          <input
-                            className="input-field h-10 md:col-span-6"
-                            value={sub.name}
-                            onChange={(e) => updateSubCompetencia(comp.id, sub.id, { name: e.target.value })}
-                            placeholder="Nombre"
-                          />
-                          <div className="relative md:col-span-2">
-                            <input
-                              className="input-field h-10 w-28 md:w-full md:justify-self-start px-3 py-2 pr-9 text-sm text-right tabular-nums"
-                              type="number"
-                              min={0}
-                              max={100}
-                              step={1}
-                              value={typeof sub.weight === 'number' ? sub.weight : 0}
-                              onChange={(e) => updateSubCompetencia(comp.id, sub.id, { weight: Number(e.target.value) })}
-                              placeholder="Peso"
-                              title="Peso (%) dentro de la competencia"
-                            />
-                            <span className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-500">%</span>
+              {/* Read-only subcompetencias */}
+              {editingCompetenciaId !== comp.id ? (
+                <div className="mt-4">
+                  <div className="text-xs text-gray-500 mb-2">Subcompetencias</div>
+                  {(comp.subCompetencias && comp.subCompetencias.length > 0) ? (
+                    <div className="flex flex-wrap gap-2">
+                      {comp.subCompetencias.map((s) => (
+                        <span
+                          key={s.id}
+                          className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-1 text-xs font-semibold text-gray-700"
+                          title={s.description || s.name}
+                        >
+                          {s.code ? s.code : s.name}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-gray-600">No hay subcompetencias todavía.</p>
+                  )}
+                </div>
+              ) : (
+                /* Edit mode */
+                <div className="mt-5 border-t border-gray-200 pt-4">
+                  <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                    <div className="md:col-span-2">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Código</label>
+                      <input
+                        className="input-field h-10 px-3 py-2 text-sm font-semibold tracking-wide uppercase"
+                        value={comp.code}
+                        onChange={(e) => updateCompetencia(comp.id, { code: e.target.value })}
+                      />
+                    </div>
+                    <div className="md:col-span-10">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Nombre</label>
+                      <input
+                        className="input-field h-10"
+                        value={comp.name}
+                        onChange={(e) => updateCompetencia(comp.id, { name: e.target.value })}
+                      />
+                    </div>
+                    <div className="md:col-span-12">
+                      <label className="block text-xs font-medium text-gray-700 mb-1">Descripción (opcional)</label>
+                      <textarea
+                        className="input-field"
+                        rows={2}
+                        value={comp.description}
+                        onChange={(e) => updateCompetencia(comp.id, { description: e.target.value })}
+                      />
+                    </div>
+                  </div>
+
+                  <div className="mt-5">
+                    <div className="flex items-center justify-between gap-2">
+                      <h3 className="text-sm font-semibold text-gray-900">Subcompetencias</h3>
+                    </div>
+
+                    {(comp.subCompetencias && comp.subCompetencias.length > 0) ? (
+                      <div className="mt-3 space-y-3">
+                        {comp.subCompetencias.map((sub) => (
+                          <div key={sub.id} className="border border-gray-200 rounded-lg p-4">
+                            <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                              <div className="md:col-span-2">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Código</label>
+                                <input
+                                  className="input-field h-10 px-3 py-2 text-sm font-semibold tracking-wide uppercase"
+                                  value={sub.code || ''}
+                                  onChange={(e) => updateSubCompetencia(comp.id, sub.id, { code: e.target.value || undefined })}
+                                  placeholder="Opcional"
+                                />
+                              </div>
+                              <div className="md:col-span-6">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Nombre</label>
+                                <input
+                                  className="input-field h-10"
+                                  value={sub.name}
+                                  onChange={(e) => updateSubCompetencia(comp.id, sub.id, { name: e.target.value })}
+                                />
+                              </div>
+                              <div className="md:col-span-4 flex items-end">
+                                <button
+                                  className="btn-secondary flex items-center justify-center gap-2 h-10 w-full"
+                                  onClick={() => deleteSubCompetencia(comp.id, sub.id)}
+                                  title="Eliminar subcompetencia"
+                                >
+                                  <Trash2 className="w-5 h-5" />
+                                  Eliminar
+                                </button>
+                              </div>
+                              <div className="md:col-span-12">
+                                <label className="block text-xs font-medium text-gray-700 mb-1">Descripción (opcional)</label>
+                                <textarea
+                                  className="input-field"
+                                  rows={2}
+                                  value={sub.description || ''}
+                                  onChange={(e) => updateSubCompetencia(comp.id, sub.id, { description: e.target.value || undefined })}
+                                  placeholder="Descripción (opcional)"
+                                />
+                              </div>
+                            </div>
                           </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-600 mt-2">No hay subcompetencias todavía.</p>
+                    )}
+
+                    <div className="mt-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
+                      <p className="text-sm font-semibold text-gray-900 mb-3">Añadir subcompetencia</p>
+                      <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
+                        <div className="md:col-span-2">
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Código</label>
+                          <input
+                            className="input-field h-10 px-3 py-2 text-sm font-semibold tracking-wide uppercase"
+                            value={(newSubByCompetenciaId[comp.id]?.code ?? '')}
+                            onChange={(e) =>
+                              setNewSubByCompetenciaId((prev) => ({
+                                ...prev,
+                                [comp.id]: {
+                                  code: e.target.value,
+                                  name: prev[comp.id]?.name ?? '',
+                                  description: prev[comp.id]?.description ?? '',
+                                },
+                              }))
+                            }
+                            placeholder="Opcional"
+                          />
+                        </div>
+                        <div className="md:col-span-6">
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Nombre</label>
+                          <input
+                            className="input-field h-10"
+                            value={(newSubByCompetenciaId[comp.id]?.name ?? '')}
+                            onChange={(e) =>
+                              setNewSubByCompetenciaId((prev) => ({
+                                ...prev,
+                                [comp.id]: {
+                                  code: prev[comp.id]?.code ?? '',
+                                  name: e.target.value,
+                                  description: prev[comp.id]?.description ?? '',
+                                },
+                              }))
+                            }
+                            placeholder="Nombre de la subcompetencia"
+                          />
+                        </div>
+                        <div className="md:col-span-4 flex items-end">
                           <button
-                            className="btn-secondary flex items-center justify-center gap-2 h-10 md:col-span-2"
-                            onClick={() => deleteSubCompetencia(comp.id, sub.id)}
-                            title="Eliminar sub-competencia"
+                            className="btn-primary h-10 w-full flex items-center justify-center gap-2"
+                            onClick={() => addSubCompetencia(comp.id)}
                           >
-                            <Trash2 className="w-5 h-5" />
-                            Eliminar
+                            <Plus className="w-5 h-5" />
+                            Añadir
                           </button>
+                        </div>
+                        <div className="md:col-span-12">
+                          <label className="block text-xs font-medium text-gray-700 mb-1">Descripción (opcional)</label>
                           <textarea
-                            className="input-field md:col-span-12"
+                            className="input-field"
                             rows={2}
-                            value={sub.description || ''}
-                            onChange={(e) => updateSubCompetencia(comp.id, sub.id, { description: e.target.value || undefined })}
+                            value={(newSubByCompetenciaId[comp.id]?.description ?? '')}
+                            onChange={(e) =>
+                              setNewSubByCompetenciaId((prev) => ({
+                                ...prev,
+                                [comp.id]: {
+                                  code: prev[comp.id]?.code ?? '',
+                                  name: prev[comp.id]?.name ?? '',
+                                  description: e.target.value,
+                                },
+                              }))
+                            }
                             placeholder="Descripción (opcional)"
                           />
                         </div>
                       </div>
-                    ))}
+                    </div>
                   </div>
-                ) : (
-                  <p className="text-sm text-gray-600">No hay sub-competencias todavía.</p>
-                )}
-              </div>
+                </div>
+              )}
 
               <div className="mt-4 text-xs text-gray-500 flex items-center gap-2">
                 <Save className="w-4 h-4" />

@@ -6,8 +6,8 @@ import {
   onSnapshot,
   orderBy,
   query,
+  runTransaction,
   serverTimestamp,
-  setDoc,
   writeBatch,
 } from 'firebase/firestore';
 import { db } from '../../config/firebase';
@@ -33,7 +33,8 @@ function fromDoc(id: string, data: any): Competencia {
 
 export function listenCompetencias(workspaceId: string, cb: (items: Competencia[]) => void) {
   const col = collection(db, 'workspaces', workspaceId, 'competencias');
-  const q = query(col, orderBy('code'));
+  // Keep the same ordering everywhere (e.g. task creation chips): creation order.
+  const q = query(col, orderBy('createdAt'));
   return onSnapshot(q, (snap) => {
     cb(
       snap.docs
@@ -45,14 +46,24 @@ export function listenCompetencias(workspaceId: string, cb: (items: Competencia[
 
 export async function upsertCompetencia(workspaceId: string, competencia: Competencia) {
   const ref = doc(db, 'workspaces', workspaceId, 'competencias', competencia.id);
-  await setDoc(ref, {
+  const payload = {
     code: competencia.code,
     name: competencia.name,
     description: competencia.description,
     weight: typeof competencia.weight === 'number' ? competencia.weight : 0,
     subCompetencias: Array.isArray(competencia.subCompetencias) ? competencia.subCompetencias : [],
     updatedAt: serverTimestamp(),
-  }, { merge: true });
+  };
+
+  // Only set createdAt once (first creation). Needed to preserve creation ordering.
+  await runTransaction(db, async (tx) => {
+    const snap = await tx.get(ref);
+    if (!snap.exists()) {
+      tx.set(ref, { ...payload, createdAt: serverTimestamp() } as any, { merge: true });
+    } else {
+      tx.set(ref, payload as any, { merge: true });
+    }
+  });
 }
 
 export async function deleteCompetencia(workspaceId: string, competenciaId: string) {
@@ -96,6 +107,7 @@ export async function seedCompetenciasIfEmpty(workspaceId: string, competencias:
           ref,
           {
             subCompetencias: defaults,
+            createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
           },
           { merge: true }
@@ -116,6 +128,7 @@ export async function seedCompetenciasIfEmpty(workspaceId: string, competencias:
           description: c.description,
           weight: typeof c.weight === 'number' ? c.weight : 0,
           subCompetencias: Array.isArray(c.subCompetencias) ? c.subCompetencias : [],
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
         },
         { merge: true }
@@ -135,6 +148,7 @@ export async function seedCompetenciasIfEmpty(workspaceId: string, competencias:
       description: c.description,
       weight: typeof c.weight === 'number' ? c.weight : 0,
       subCompetencias: Array.isArray(c.subCompetencias) ? c.subCompetencias : [],
+      createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     }, { merge: true });
   }

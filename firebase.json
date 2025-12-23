@@ -4,6 +4,7 @@
     "indexes": "firestore.indexes.json"
   },
   "hosting": {
+    "site": "avaliacioncompetencias",
     "public": "dist",
     "ignore": [
       "firebase.json",

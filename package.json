@@ -5,12 +5,16 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:full": "concurrently -k -n WEB,API -c blue,green \"npm:dev\" \"npm:server\"",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "server": "node server/index.js",
     "start": "NODE_ENV=production node server/index.js",
     "db:seed:lomloe": "node server/database/seed_lomloe_from_csv.mjs server/database/seed_data/reglas-negocio.csv",
-    "firestore:seed:demo": "node server/scripts/seed_firestore_demo.mjs"
+    "firestore:seed:demo": "node server/scripts/seed_firestore_demo.mjs",
+    "firestore:reset:demo": "node server/scripts/reset_demo_workspace.mjs",
+    "firestore:seed:demo:evidence": "node server/scripts/seed_demo_evidence.mjs",
+    "firestore:seed:competencias": "node server/scripts/seed_competencias_workspace.mjs"
   },
   "keywords": [
     "educación",
@@ -29,6 +33,7 @@
     "@vitejs/plugin-react": "^5.1.2",
     "autoprefixer": "^10.4.23",
     "cheerio": "^1.1.2",
+    "concurrently": "^9.2.1",
     "nodemon": "^3.1.11",
     "postcss": "^8.5.6",
     "tailwindcss": "^3.4.19",
@@ -36,7 +41,6 @@
     "vite": "^7.3.0"
   },
   "dependencies": {
-    "@google/generative-ai": "^0.24.1",
     "chart.js": "^4.5.1",
     "cors": "^2.8.5",
     "csv-parse": "^6.1.0",

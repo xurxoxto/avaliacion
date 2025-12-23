@@ -7,7 +7,6 @@ import classroomsRouter from './routes/classrooms.js';
 import studentsRouter from './routes/students.js';
 import evaluationsRouter from './routes/evaluations.js';
 import registrarEvaluacionRouter from './routes/registrarEvaluacion.js';
-import aiReportRouter from './routes/aiReport.js';
 
 dotenv.config();
 
@@ -27,7 +26,6 @@ app.use('/api/classrooms', classroomsRouter);
 app.use('/api/students', studentsRouter);
 app.use('/api/evaluations', evaluationsRouter);
 app.use('/api/registrar-evaluacion', registrarEvaluacionRouter);
-app.use('/api/ai', aiReportRouter);
 
 // Health check endpoint
 app.get('/api/health', (req, res) => {

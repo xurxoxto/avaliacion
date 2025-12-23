@@ -4,6 +4,7 @@ import {
   doc,
   setDoc,
   deleteDoc,
+  updateDoc,
   query,
   where,
   serverTimestamp,
@@ -64,6 +65,18 @@ export async function createStudent(
     updatedAt: serverTimestamp(),
   });
   return newStudentRef.id;
+}
+
+export async function updateStudent(
+  workspaceId: string,
+  studentId: string,
+  patch: Partial<Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'classroomId' | 'progress' | 'averageGrade'>>
+): Promise<void> {
+  const studentRef = doc(db, 'workspaces', workspaceId, STUDENTS_COLLECTION, studentId);
+  await updateDoc(studentRef, {
+    ...patch,
+    updatedAt: serverTimestamp(),
+  } as any);
 }
 
 export async function deleteStudent(workspaceId: string, studentId: string): Promise<void> {
