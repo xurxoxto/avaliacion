@@ -1,4 +1,4 @@
-import { LogOut, BookOpen, Search } from 'lucide-react';
+import { LogOut, Search } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Classroom, Student, Teacher } from '../types';
 import { useNavigate } from 'react-router-dom';
@@ -79,10 +79,10 @@ export default function Header({ teacher, onLogout, showSearch = true }: HeaderP
               onClick={() => navigate('/')}
               title="Inicio"
             >
-              <BookOpen className="w-8 h-8 text-primary-600" />
+              <img src="/logo.png" alt="Senda Logo" className="w-8 h-8 object-contain" />
               <div className="min-w-0">
                 <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Senda</h1>
-                <p className="text-sm text-gray-600 hidden sm:block truncate">Sistema de Evaluación</p>
+                <p className="text-sm text-gray-600 hidden sm:block truncate">Sistema de Evaluación Continua</p>
               </div>
             </div>
           </div>
