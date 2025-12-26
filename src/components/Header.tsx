@@ -72,14 +72,14 @@ export default function Header({ teacher, onLogout, showSearch = true }: HeaderP
   return (
     <header className="bg-white shadow-sm border-b border-gray-200">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+        <div className="flex items-center justify-between h-20">
           <div className="flex items-center gap-3 min-w-0">
             <div
               className="flex items-center cursor-pointer"
               onClick={() => navigate('/')}
               title="Inicio - Senda"
             >
-              <img src="/logo.png" alt="Senda Logo" className="w-12 h-12 object-contain" />
+              <img src="/logo.png" alt="Senda Logo" className="w-16 h-16 object-contain" />
             </div>
           </div>
 
