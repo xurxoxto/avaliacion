@@ -55,6 +55,19 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
         fetchCriterionEvaluationsForStudents({ workspaceId, studentIds: students.map((s) => s.id) }),
       ]);
 
+      if (evaluations.length === 0) {
+        const ok = confirm(
+          'No se han encontrado evaluaciones por criterio (escala 1–4) para este aula.\n\nEl CSV saldrá sin calificaciones.\n\n¿Quieres exportar igualmente?'
+        );
+        if (!ok) return;
+      }
+
+      if (criteria.length === 0) {
+        alert(
+          'Aviso: no hay criterios cargados en Firestore para este workspace. Sin criterios, el exportador no puede asociar evaluaciones a áreas XADE y el CSV puede salir vacío.'
+        );
+      }
+
       const csv = generateXadeCsv({
         classroom,
         students,
@@ -76,7 +89,7 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
       if (unmapped.length > 0) {
         const head = unmapped.slice(0, 8).join(' · ');
         alert(
-          `Aviso: algunas áreas de criterios no se pudieron mapear a columnas XADE y se omitieron del CSV.\n\nÁreas (ejemplos): ${head}${unmapped.length > 8 ? '…' : ''}`
+          `Aviso: algunos criterios evaluados no se pudieron mapear a columnas XADE y se omitieron del CSV.\n\nEjemplos: ${head}${unmapped.length > 8 ? '…' : ''}`
         );
       }
     } catch (e) {

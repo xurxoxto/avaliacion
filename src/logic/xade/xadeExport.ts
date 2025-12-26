@@ -101,6 +101,37 @@ function areaToColumn(area: string): XadeColumnKey | null {
   return null;
 }
 
+function criterionIdToColumn(criterionId: string): XadeColumnKey | null {
+  const raw = String(criterionId || '').trim();
+  if (!raw) return null;
+
+  const token = raw
+    .split(/[.\s\-_]+/g)
+    .map((t) => String(t || '').trim())
+    .filter(Boolean)[0];
+  if (!token) return null;
+
+  const t = normalizeText(token).replace(/[^a-z0-9]/g, '');
+  if (!t) return null;
+
+  // Common Galicia-ish criterion id prefixes (best-effort; non-blocking fallback).
+  if (t === 'lg' || t === 'lga' || t.includes('galeg')) return 'Linguas_G';
+  if (t === 'lc' || t === 'lcl' || t.includes('castell') || t.includes('espan')) return 'Lingua_C';
+
+  if (t === 'mat' || t.includes('mat')) return 'Matematicas';
+
+  if (t === 'cn' || t.includes('natur')) return 'C_Naturais';
+  if (t === 'cs' || t.includes('social')) return 'C_Sociais';
+
+  if (t === 'ef' || t.includes('fisic')) return 'E_Fisica';
+
+  if (t === 'ea' || t.includes('artist') || t.includes('mus') || t.includes('plast') || t.includes('visual')) return 'Artística';
+
+  if (t.includes('val') || t.includes('etic') || t.includes('civic')) return 'Valores';
+
+  return null;
+}
+
 export function inferXadeColumnFromArea(area: string): XadeColumnKey | null {
   return areaToColumn(area);
 }
@@ -118,16 +149,25 @@ export function findUnmappedEvaluatedAreas(params: {
     criterionAreaById.set(id, String((c as any)?.area ?? '').trim());
   }
 
-  const usedAreas = new Set<string>();
-  for (const e of criterionEvaluations || []) {
-    const area = criterionAreaById.get(String(e.criterionId || '').trim()) || '';
-    const a = String(area || '').trim();
-    if (a) usedAreas.add(a);
-  }
-
   const unmapped: string[] = [];
-  for (const a of usedAreas) {
-    if (!areaToColumn(a)) unmapped.push(a);
+  const seen = new Set<string>();
+
+  for (const e of criterionEvaluations || []) {
+    const criterionId = String(e.criterionId || '').trim();
+    if (!criterionId) continue;
+
+    const area = criterionAreaById.get(criterionId) || '';
+    const a = String(area || '').trim();
+
+    const colFromArea = a ? areaToColumn(a) : null;
+    const colFromId = criterionIdToColumn(criterionId);
+    const mapped = Boolean(colFromArea || colFromId);
+    if (mapped) continue;
+
+    const label = a ? a : `ID:${criterionId}`;
+    if (seen.has(label)) continue;
+    seen.add(label);
+    unmapped.push(label);
   }
 
   unmapped.sort((x, y) => x.localeCompare(y, 'es-ES'));
@@ -169,8 +209,9 @@ export function generateXadeCsv(params: {
   // Aggregate scores by student + column
   const agg = new Map<string, Map<XadeColumnKey, { sum: number; count: number }>>();
   for (const e of evals) {
-    const area = criterionAreaById.get(String(e.criterionId || '').trim()) || '';
-    const col = areaToColumn(area);
+    const criterionId = String(e.criterionId || '').trim();
+    const area = criterionAreaById.get(criterionId) || '';
+    const col = areaToColumn(area) || criterionIdToColumn(criterionId);
     if (!col) continue;
     const score = Number(e.score);
     if (!Number.isFinite(score) || score <= 0) continue;
