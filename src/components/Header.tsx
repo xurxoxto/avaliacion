@@ -75,15 +75,11 @@ export default function Header({ teacher, onLogout, showSearch = true }: HeaderP
         <div className="flex items-center justify-between h-16">
           <div className="flex items-center gap-3 min-w-0">
             <div
-              className="flex items-center gap-3 cursor-pointer min-w-0"
+              className="flex items-center cursor-pointer"
               onClick={() => navigate('/')}
-              title="Inicio"
+              title="Inicio - Senda"
             >
-              <img src="/logo.png" alt="Senda Logo" className="w-8 h-8 object-contain" />
-              <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Senda</h1>
-                <p className="text-sm text-gray-600 hidden sm:block truncate">Sistema de Evaluación Continua</p>
-              </div>
+              <img src="/logo.png" alt="Senda Logo" className="w-12 h-12 object-contain" />
             </div>
           </div>
 
