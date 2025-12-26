@@ -3,6 +3,7 @@ import {
   onSnapshot,
   doc,
   setDoc,
+  writeBatch,
   deleteDoc,
   updateDoc,
   query,
@@ -15,12 +16,16 @@ import type { Student } from '../../types';
 const STUDENTS_COLLECTION = 'students';
 
 function fromDoc(id: string, data: any): Student {
+  const levelNum = typeof data?.level === 'number' ? data.level : Number(data?.level ?? 0);
+  const level = levelNum === 5 || levelNum === 6 ? (levelNum as 5 | 6) : undefined;
   return {
     id,
+    nia: typeof data?.nia === 'string' ? data.nia : undefined,
     firstName: data?.firstName ?? '',
     lastName: data?.lastName ?? '',
     classroomId: data?.classroomId ?? '',
     listNumber: typeof data?.listNumber === 'number' ? data.listNumber : 0,
+    level,
     progress: typeof data?.progress === 'number' ? data.progress : 0,
     averageGrade: typeof data?.averageGrade === 'number' ? data.averageGrade : 0,
     createdAt: data?.createdAt?.toDate ? data.createdAt.toDate() : new Date(),
@@ -67,10 +72,39 @@ export async function createStudent(
   return newStudentRef.id;
 }
 
+export async function createStudentsBulk(
+  workspaceId: string,
+  students: Array<Omit<Student, 'id' | 'createdAt' | 'updatedAt'>>
+): Promise<number> {
+  if (students.length === 0) return 0;
+
+  const collectionRef = collection(db, 'workspaces', workspaceId, STUDENTS_COLLECTION);
+  const MAX_BATCH = 500;
+
+  let created = 0;
+  for (let i = 0; i < students.length; i += MAX_BATCH) {
+    const chunk = students.slice(i, i + MAX_BATCH);
+    const batch = writeBatch(db);
+    chunk.forEach((studentData) => {
+      const newStudentRef = doc(collectionRef);
+      batch.set(newStudentRef, {
+        ...studentData,
+        id: newStudentRef.id,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    });
+    await batch.commit();
+    created += chunk.length;
+  }
+
+  return created;
+}
+
 export async function updateStudent(
   workspaceId: string,
   studentId: string,
-  patch: Partial<Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'classroomId' | 'progress' | 'averageGrade'>>
+  patch: Partial<Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'classroomId' | 'level' | 'progress' | 'averageGrade'>>
 ): Promise<void> {
   const studentRef = doc(db, 'workspaces', workspaceId, STUDENTS_COLLECTION, studentId);
   await updateDoc(studentRef, {

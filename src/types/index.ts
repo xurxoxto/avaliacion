@@ -9,10 +9,14 @@ export interface Classroom {
 
 export interface Student {
   id: string;
+  /** Optional official identifier (XADE). Stored if present but not required for the app. */
+  nia?: string;
   firstName: string;
   lastName: string;
   classroomId: string;
   listNumber: number;
+  /** Academic level for multi-grade groups (internivel). */
+  level?: 5 | 6;
   progress: number; // 0-100
   averageGrade: number; // 0-10
   createdAt: Date;
@@ -38,28 +42,6 @@ export interface SubCompetencia {
   weight?: number;
 }
 
-export interface Observation {
-  id: string;
-  studentId: string;
-  teacherId: string;
-  date: Date;
-  competenciaId: string;
-  rating: number; // 1-10
-  observation: string;
-  evidenceFiles?: string[];
-}
-
-export interface EvaluationEntry {
-  id: string;
-  studentId: string;
-  competenciaId: string;
-  subCompetenciaId?: string;
-  rating: number;
-  observation: string;
-  date: Date;
-  evidenceUrls?: string[];
-}
-
 export type GradeKey = 'BLUE' | 'GREEN' | 'YELLOW' | 'RED';
 
 export type LearningSituationType = 'PROJECT' | 'TASK' | 'CHALLENGE';
@@ -83,6 +65,8 @@ export interface TaskCompetencyLink {
   weight: number;
 }
 
+export type AudienceLevel = 5 | 6;
+
 export interface LearningTask {
   id: string;
   learningSituationId: string;
@@ -90,9 +74,26 @@ export interface LearningTask {
   description: string;
   /** Weighted links to competencias/subcompetencias (manual). */
   links: TaskCompetencyLink[];
+  /** Optional: which internivel levels this task applies to. Missing/empty means both (5º and 6º). */
+  audienceLevels?: AudienceLevel[];
+  /** Optional: achievement text per level (used as teacher-facing guidance). */
+  achievementTextByLevel?: Partial<Record<AudienceLevel, string>>;
   /** Optional: if set, task is assigned only to these students (subset across classrooms). */
   assignedStudentIds?: string[];
   createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface TaskEvaluationTeacherEntry {
+  rating: GradeKey;
+  numericalValue: number;
+  observation?: string;
+  /** Snapshot of task-level achievement text (per student level) at evaluation time. */
+  achievementTextSnapshot?: string;
+  teacherId?: string;
+  teacherName?: string;
+  teacherEmail?: string;
+  timestamp: Date;
   updatedAt: Date;
 }
 
@@ -106,10 +107,14 @@ export interface TaskEvaluation {
   /** Copied at write time from task.links for denormalization. */
   links: TaskCompetencyLink[];
   observation?: string;
+  /** Snapshot of task-level achievement text (per student level) at evaluation time. */
+  achievementTextSnapshot?: string;
   /** Author information (for multi-teacher collaboration). */
   teacherId?: string;
   teacherName?: string;
   teacherEmail?: string;
+  /** Per-teacher entries to avoid overwrites when multiple teachers evaluate the same student+task. */
+  byTeacher?: Record<string, TaskEvaluationTeacherEntry>;
   timestamp: Date;
   updatedAt: Date;
 }
@@ -126,40 +131,41 @@ export interface SituationEvaluation {
   updatedAt: Date;
 }
 
-export interface Project {
+/**
+ * Ad-hoc evidence note (unplanned): a quick, teacher-authored record linked to one or more competencias.
+ * Stored outside tasks/situations so it can capture spontaneous classroom evidence.
+ */
+export interface EvidenceNote {
   id: string;
-  name: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface TriangulationGrade {
-  id: string;
-  workspaceId: string;
   studentId: string;
-  projectId: string;
-  competenciaId: string;
+  competenciaIds: string[];
   gradeKey: GradeKey;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-export interface TriangulationObservation {
-  id: string;
-  workspaceId: string;
-  studentId: string;
-  projectId: string;
-  competenciaId: string;
-  subCompetenciaId?: string;
-  gradeKey: GradeKey;
-  /** Numeric value derived from gradeKey (e.g., BLUE=10.0). */
   numericValue: number;
-  observation: string;
-  /** Author information (for multi-teacher collaboration). */
+  text: string;
   teacherId?: string;
   teacherName?: string;
   teacherEmail?: string;
   createdAt: Date;
+  updatedAt: Date;
+}
+
+/**
+ * Criterion-based evaluation (criterionId -> descriptor DO codes).
+ * Score uses 1..4 to match DO granularity calculations.
+ */
+export interface CriterionEvaluation {
+  id: string;
+  studentId: string;
+  criterionId: string;
+  /** 1..4 */
+  score: number;
+  /** Optional UI-friendly mirror of the score. */
+  gradeKey?: GradeKey;
+  teacherId?: string;
+  teacherName?: string;
+  teacherEmail?: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface Teacher {

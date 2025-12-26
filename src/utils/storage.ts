@@ -1,53 +1,33 @@
-import { Classroom, Student, EvaluationEntry, Teacher, Competencia } from '../types';
+import { Classroom, Student, Teacher, Competencia } from '../types';
 import { COMPETENCIAS_CLAVE, withDefaultLomloeSubCompetencias } from '../data/competencias';
 
 export const STORAGE_KEYS = {
   CLASSROOMS: 'avaliacion_classrooms',
   STUDENTS: 'avaliacion_students',
-  EVALUATIONS: 'avaliacion_evaluations',
   TEACHER: 'avaliacion_teacher',
   COMPETENCIAS: 'avaliacion_competencias',
-  /** Monotonic-ish timestamp used for cloud sync conflict resolution. */
-  SYNC_UPDATED_AT: 'avaliacion_sync_updatedAt',
+  ALERTS: 'avaliacion_alerts_v1',
+  WORKSPACE_SETTINGS: 'avaliacion_workspace_settings_v1',
 } as const;
 
 function notifyDataChanged(source: 'local' | 'remote' = 'local') {
   try {
-    if (source === 'local') {
-      // Persist a last-updated marker so new devices don't overwrite remote with empty local data.
-      localStorage.setItem(STORAGE_KEYS.SYNC_UPDATED_AT, String(Date.now()));
-    }
     window.dispatchEvent(new CustomEvent('avaliacion:data-changed', { detail: { source } }));
   } catch {
     // no-op (e.g. SSR)
   }
 }
 
-function normalizeDate(value: any): Date {
-  try {
-    if (!value) return new Date(0);
-    if (value instanceof Date) return value;
-    if (typeof value === 'string' || typeof value === 'number') {
-      const d = new Date(value);
-      return Number.isNaN(d.getTime()) ? new Date(0) : d;
-    }
-    if (typeof value === 'object') {
-      if (typeof (value as any).toDate === 'function') {
-        const d = (value as any).toDate();
-        return d instanceof Date && !Number.isNaN(d.getTime()) ? d : new Date(0);
-      }
-      if (typeof (value as any).seconds === 'number') {
-        const d = new Date((value as any).seconds * 1000);
-        return Number.isNaN(d.getTime()) ? new Date(0) : d;
-      }
-    }
-    return new Date(0);
-  } catch {
-    return new Date(0);
-  }
-}
-
 export const storage = {
+  cleanupLegacy(): void {
+    // We are Firestore-first online. Remove legacy local-only datasets.
+    try {
+      localStorage.removeItem('avaliacion_evaluations');
+    } catch {
+      // ignore
+    }
+  },
+
   // Classrooms
   getClassrooms(): Classroom[] {
     try {
@@ -87,6 +67,7 @@ export const storage = {
       return parsed.map((s: any) => ({
         ...s,
         id: String(s?.id ?? ''),
+        nia: typeof s?.nia === 'string' ? s.nia : undefined,
         firstName: String(s?.firstName ?? ''),
         lastName: String(s?.lastName ?? ''),
         classroomId: String(s?.classroomId ?? ''),
@@ -108,38 +89,6 @@ export const storage = {
       notifyDataChanged('local');
     } catch (error) {
       console.error('Error saving students:', error);
-    }
-  },
-
-  // Evaluations
-  getEvaluations(): EvaluationEntry[] {
-    try {
-      const data = localStorage.getItem(STORAGE_KEYS.EVALUATIONS);
-      const parsed = data ? JSON.parse(data) : [];
-      if (!Array.isArray(parsed)) return [];
-      return parsed.map((e: any) => ({
-        ...e,
-        id: String(e?.id ?? ''),
-        studentId: String(e?.studentId ?? ''),
-        competenciaId: String(e?.competenciaId ?? ''),
-        subCompetenciaId: e?.subCompetenciaId ? String(e.subCompetenciaId) : undefined,
-        rating: Number(e?.rating ?? 0) || 0,
-        observation: String(e?.observation ?? ''),
-        date: normalizeDate(e?.date),
-        evidenceUrls: Array.isArray(e?.evidenceUrls) ? e.evidenceUrls : [],
-      })) as EvaluationEntry[];
-    } catch (error) {
-      console.error('Error loading evaluations:', error);
-      return [];
-    }
-  },
-
-  saveEvaluations(evaluations: EvaluationEntry[]): void {
-    try {
-      localStorage.setItem(STORAGE_KEYS.EVALUATIONS, JSON.stringify(evaluations));
-      notifyDataChanged('local');
-    } catch (error) {
-      console.error('Error saving evaluations:', error);
     }
   },
 
@@ -227,5 +176,43 @@ export const storage = {
       localStorage.removeItem(key);
     });
     notifyDataChanged('local');
+  },
+
+  // Alerts (derived UI state)
+  getAlerts<T = unknown>(): T | null {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.ALERTS);
+      return data ? (JSON.parse(data) as T) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveAlerts(value: unknown): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.ALERTS, JSON.stringify(value));
+      notifyDataChanged('local');
+    } catch {
+      // ignore
+    }
+  },
+
+  // Workspace settings (small config)
+  getWorkspaceSettings<T = unknown>(): T | null {
+    try {
+      const data = localStorage.getItem(STORAGE_KEYS.WORKSPACE_SETTINGS);
+      return data ? (JSON.parse(data) as T) : null;
+    } catch {
+      return null;
+    }
+  },
+
+  saveWorkspaceSettings(value: unknown): void {
+    try {
+      localStorage.setItem(STORAGE_KEYS.WORKSPACE_SETTINGS, JSON.stringify(value));
+      notifyDataChanged('local');
+    } catch {
+      // ignore
+    }
   },
 };

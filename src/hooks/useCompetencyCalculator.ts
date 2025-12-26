@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GradeKey, TaskEvaluation } from '../types';
+import type { EvidenceNote, GradeKey, TaskEvaluation } from '../types';
 import { listenTaskEvaluationsForStudent } from '../lib/firestore/services/taskEvaluationsService';
+import { listenEvidenceNotesForStudent } from '../lib/firestore/services/evidenceNotesService';
 import { gradeKeyFromNumeric } from '../utils/triangulation/gradeScale';
 
 export type Trend = 'UP' | 'DOWN' | 'STABLE';
@@ -10,6 +11,8 @@ export interface CompetencyComputed {
   average: number;
   averageGradeKey: GradeKey;
   count: number;
+  /** Sum of weights contributing to this competencia (after per-evidence normalization). */
+  weightTotal: number;
   latestAt: Date | null;
   latestValue: number | null;
   latestGradeKey: GradeKey;
@@ -60,18 +63,25 @@ function weightedAverage(items: Array<{ value: number; weight: number }>): numbe
 export function useCompetencyCalculator(params: {
   workspaceId?: string;
   studentId?: string;
+  resolveCompetenciaId?: (raw: any) => string | null;
 }) {
-  const { workspaceId, studentId } = params;
+  const { workspaceId, studentId, resolveCompetenciaId } = params;
   const [evaluations, setEvaluations] = useState<TaskEvaluation[]>([]);
+  const [evidenceNotes, setEvidenceNotes] = useState<EvidenceNote[]>([]);
 
   useEffect(() => {
     if (!workspaceId || !studentId) {
       setEvaluations([]);
+      setEvidenceNotes([]);
       return;
     }
 
     const unsub = listenTaskEvaluationsForStudent(workspaceId, studentId, setEvaluations);
-    return () => unsub();
+    const unsubEvidence = listenEvidenceNotesForStudent(workspaceId, studentId, setEvidenceNotes);
+    return () => {
+      unsub();
+      unsubEvidence();
+    };
   }, [workspaceId, studentId]);
 
   const computedByCompetency = useMemo(() => {
@@ -85,16 +95,40 @@ export function useCompetencyCalculator(params: {
       }
     >();
 
+    type EvidenceLike = {
+      ts: Date;
+      value: number;
+      links: Array<{ competenciaId: any; weight?: any }>;
+    };
+
+    const allEvidence: EvidenceLike[] = [];
     for (const ev of evaluations) {
-      const ts = ev.timestamp instanceof Date ? ev.timestamp : new Date(ev.timestamp);
+      allEvidence.push({
+        ts: ev.timestamp instanceof Date ? ev.timestamp : new Date(ev.timestamp),
+        value: Number(ev.numericalValue ?? 0),
+        links: Array.isArray(ev.links) ? (ev.links as any) : [],
+      });
+    }
+    for (const note of evidenceNotes) {
+      const ids = Array.from(new Set((note.competenciaIds || []).map(String).map((s) => s.trim()).filter(Boolean)));
+      allEvidence.push({
+        ts: note.createdAt instanceof Date ? note.createdAt : new Date(note.createdAt),
+        value: Number(note.numericValue ?? 0),
+        links: ids.map((competenciaId) => ({ competenciaId, weight: 0 })),
+      });
+    }
+
+    for (const item of allEvidence) {
+      const ts = item.ts;
       const qk = quarterKey(ts);
 
-      const links = Array.isArray(ev.links) ? ev.links : [];
-      const validLinks = links
+      const validLinks = (item.links || [])
         .map((l) => {
-          const compId = String(l?.competenciaId ?? '').trim();
+          const rawComp = String((l as any)?.competenciaId ?? '').trim();
+          if (!rawComp) return null;
+          const compId = typeof resolveCompetenciaId === 'function' ? resolveCompetenciaId(rawComp) : rawComp;
           if (!compId) return null;
-          const w = typeof l?.weight === 'number' ? l.weight : Number(l?.weight ?? 0);
+          const w = typeof (l as any)?.weight === 'number' ? (l as any).weight : Number((l as any)?.weight ?? 0);
           const weight = Number.isFinite(w) ? Math.max(0, w) : 0;
           return { competenciaId: compId, weight };
         })
@@ -129,15 +163,15 @@ export function useCompetencyCalculator(params: {
           byQuarter: new Map<string, Array<{ value: number; weight: number }>>(),
         };
 
-        entry.items.push({ value: ev.numericalValue, weight: normalizedWeight, at: ts });
+        entry.items.push({ value: item.value, weight: normalizedWeight, at: ts });
 
         const arr = entry.byQuarter.get(qk) || [];
-        arr.push({ value: ev.numericalValue, weight: normalizedWeight });
+        arr.push({ value: item.value, weight: normalizedWeight });
         entry.byQuarter.set(qk, arr);
 
         if (!entry.latestAt || ts.getTime() > entry.latestAt.getTime()) {
           entry.latestAt = ts;
-          entry.latestValue = ev.numericalValue;
+          entry.latestValue = item.value;
         }
 
         byComp.set(compId, entry);
@@ -151,6 +185,7 @@ export function useCompetencyCalculator(params: {
     const out = new Map<string, CompetencyComputed>();
     for (const [competenciaId, info] of byComp.entries()) {
       const avg = weightedAverage(info.items);
+      const weightTotal = info.items.reduce((acc, it) => acc + (Number.isFinite(it.weight) ? Math.max(0, it.weight) : 0), 0);
       const lastVals = info.byQuarter.get(currentQ) || [];
       const prevVals = info.byQuarter.get(prevQ) || [];
       const lastAvg = lastVals.length ? weightedAverage(lastVals) : null;
@@ -164,6 +199,7 @@ export function useCompetencyCalculator(params: {
         average: avg,
         averageGradeKey: gradeKeyFromNumeric(avg),
         count: info.items.length,
+        weightTotal,
         latestAt: info.latestAt,
         latestValue: info.latestValue,
         latestGradeKey: gradeKeyFromNumeric(typeof info.latestValue === 'number' ? info.latestValue : avg),
@@ -178,6 +214,7 @@ export function useCompetencyCalculator(params: {
 
   return {
     evaluations,
+    evidenceNotes,
     computedByCompetency,
   };
 }

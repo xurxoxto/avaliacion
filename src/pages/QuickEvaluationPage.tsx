@@ -116,6 +116,26 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
     return map;
   }, [evaluations]);
 
+  const getTeacherEntry = (evaluation: TaskEvaluation | undefined | null) => {
+    if (!evaluation) return undefined;
+    const teacherId = (teacher?.id || '').trim();
+    if (!teacherId) return undefined;
+    const byTeacher = (evaluation as any)?.byTeacher;
+    if (!byTeacher || typeof byTeacher !== 'object') return undefined;
+    return (byTeacher as any)[teacherId] as any;
+  };
+
+  const getCurrentRating = (evaluation: TaskEvaluation | undefined | null) => {
+    const entry = getTeacherEntry(evaluation);
+    return (entry?.rating as GradeKey | undefined) ?? evaluation?.rating;
+  };
+
+  const getCurrentObservation = (evaluation: TaskEvaluation | undefined | null) => {
+    const entry = getTeacherEntry(evaluation);
+    const obs = typeof entry?.observation === 'string' ? entry.observation : undefined;
+    return obs ?? evaluation?.observation;
+  };
+
   const competenciasById = useMemo(() => {
     const map = new Map<string, Competencia>();
     for (const c of competencias) map.set(c.id, c);
@@ -128,6 +148,23 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
     return new Set(ids.map(String).filter(Boolean));
   }, [tasks, selectedTaskId]);
 
+  const selectedTaskAudience = useMemo(() => {
+    const t = tasks.find((x) => x.id === selectedTaskId);
+    const raw = Array.isArray((t as any)?.audienceLevels) ? (t as any).audienceLevels : [];
+    const levels = raw.map((x: any) => Number(x)).filter((n: any) => n === 5 || n === 6) as Array<5 | 6>;
+    const uniq = Array.from(new Set(levels));
+    return new Set<5 | 6>(uniq.length === 1 ? uniq : ([5, 6] as Array<5 | 6>));
+  }, [tasks, selectedTaskId]);
+
+  const taskAudienceLabel = (task: LearningTask) => {
+    const raw = Array.isArray((task as any)?.audienceLevels) ? (task as any).audienceLevels : [];
+    const levels = raw.map((x: any) => Number(x)).filter((n: any) => n === 5 || n === 6) as Array<5 | 6>;
+    const uniq = Array.from(new Set(levels));
+    if (uniq.length === 1 && uniq[0] === 5) return '5º';
+    if (uniq.length === 1 && uniq[0] === 6) return '6º';
+    return '5º+6º';
+  };
+
   const eligibleStudents = useMemo(() => {
     const allowed = new Set((teacher.classroomIds || []).filter(Boolean));
     const filtered = allowed.size > 0 ? students.filter((s) => allowed.has(s.classroomId)) : students;
@@ -136,14 +173,22 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
       ? filtered.filter((s) => assignedStudentSet.has(s.id))
       : filtered;
 
-    return [...filteredByAssignment].sort((a, b) => {
+    const filteredByAudience = selectedTaskAudience.size === 2
+      ? filteredByAssignment
+      : filteredByAssignment.filter((s) => {
+          // If student.level is not set, keep them visible (teacher can still decide).
+          if (s.level !== 5 && s.level !== 6) return true;
+          return selectedTaskAudience.has(s.level);
+        });
+
+    return [...filteredByAudience].sort((a, b) => {
       if (a.classroomId !== b.classroomId) return a.classroomId.localeCompare(b.classroomId);
       if (a.listNumber !== b.listNumber) return a.listNumber - b.listNumber;
       const aName = `${a.lastName} ${a.firstName}`.trim();
       const bName = `${b.lastName} ${b.firstName}`.trim();
       return aName.localeCompare(bName);
     });
-  }, [students, teacher.classroomIds, assignedStudentSet]);
+  }, [students, teacher.classroomIds, assignedStudentSet, selectedTaskAudience]);
 
   useEffect(() => {
     if (!focusStudentId) {
@@ -171,6 +216,43 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
     return tasks.find((t) => t.id === selectedTaskId) || null;
   }, [tasks, selectedTaskId]);
 
+  const achievementSnapshotForStudent = (student: Student | null | undefined) => {
+    if (!selectedTask) return '';
+    const raw = (selectedTask as any)?.achievementTextByLevel;
+    if (!raw || typeof raw !== 'object') return '';
+
+    const t5 = typeof raw[5] === 'string' ? String(raw[5]).trim() : '';
+    const t6 = typeof raw[6] === 'string' ? String(raw[6]).trim() : '';
+    const level = student?.level;
+
+    if (level === 5) return t5;
+    if (level === 6) return t6;
+
+    if (t5 && t6 && t5 !== t6) return `5º: ${t5}\n6º: ${t6}`;
+    return t5 || t6;
+  };
+
+  const obsStudent = useMemo(() => {
+    if (!obsStudentId) return null;
+    return students.find((s) => s.id === obsStudentId) || null;
+  }, [students, obsStudentId]);
+
+  const obsAchievementHint = useMemo(() => {
+    if (!selectedTask) return '';
+    const raw = (selectedTask as any)?.achievementTextByLevel;
+    if (!raw || typeof raw !== 'object') return '';
+
+    const t5 = typeof raw[5] === 'string' ? String(raw[5]).trim() : '';
+    const t6 = typeof raw[6] === 'string' ? String(raw[6]).trim() : '';
+
+    const level = obsStudent?.level;
+    if (level === 5) return t5;
+    if (level === 6) return t6;
+
+    if (t5 && t6 && t5 !== t6) return `5º: ${t5}\n6º: ${t6}`;
+    return t5 || t6;
+  }, [selectedTask, obsStudent]);
+
   const showToast = (message: string) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     setToast({ message, visible: true });
@@ -195,12 +277,15 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
     if (!workspaceId || !learningSituationId || !selectedTaskId) return;
     setSavingStudentId(studentId);
     try {
+      const student = students.find((s) => s.id === studentId) || null;
       const res = await upsertTaskEvaluation({
         workspaceId,
         studentId,
         learningSituationId,
         taskId: selectedTaskId,
         rating,
+        linksSnapshot: selectedTask?.links ?? [],
+        achievementTextSnapshot: achievementSnapshotForStudent(student),
         teacherId: teacher.id,
         teacherName: teacher.name,
         teacherEmail: teacher.email,
@@ -208,8 +293,11 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
       const compIds = Array.from(new Set((res.links || []).map((l) => l.competenciaId).filter(Boolean)));
       const comps = relatedCompetencySummary(compIds);
       showToast(comps ? `Evaluación guardada. Alimenta: ${comps}` : 'Evaluación guardada.');
-    } catch {
-      alert('No se pudo guardar la evaluación.');
+    } catch (err: any) {
+      console.error('upsertTaskEvaluation failed', err);
+      const code = typeof err?.code === 'string' ? err.code : '';
+      const msg = typeof err?.message === 'string' ? err.message : '';
+      alert(code || msg ? `No se pudo guardar la evaluación. ${code} ${msg}`.trim() : 'No se pudo guardar la evaluación.');
     } finally {
       setSavingStudentId('');
     }
@@ -217,19 +305,20 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
 
   const openObservation = (studentId: string) => {
     const existing = evaluationsByStudentId.get(studentId);
-    if (!existing?.rating) {
+    const rating = getCurrentRating(existing);
+    if (!rating) {
       alert('Selecciona un nivel antes de añadir una observación.');
       return;
     }
     setObsStudentId(studentId);
-    setObsDraft(existing?.observation || '');
+    setObsDraft(getCurrentObservation(existing) || '');
     setObsOpen(true);
   };
 
   const saveObservation = async () => {
     if (!workspaceId || !learningSituationId || !selectedTaskId || !obsStudentId) return;
     const existing = evaluationsByStudentId.get(obsStudentId);
-    const rating = existing?.rating;
+    const rating = getCurrentRating(existing);
     if (!rating) {
       alert('Selecciona un nivel antes de guardar.');
       return;
@@ -237,6 +326,7 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
 
     setSavingStudentId(obsStudentId);
     try {
+      const student = students.find((s) => s.id === obsStudentId) || null;
       const res = await upsertTaskEvaluation({
         workspaceId,
         studentId: obsStudentId,
@@ -244,6 +334,8 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
         taskId: selectedTaskId,
         rating,
         observation: obsDraft,
+        linksSnapshot: selectedTask?.links ?? [],
+        achievementTextSnapshot: achievementSnapshotForStudent(student),
         teacherId: teacher.id,
         teacherName: teacher.name,
         teacherEmail: teacher.email,
@@ -254,8 +346,11 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
       setObsOpen(false);
       setObsStudentId('');
       setObsDraft('');
-    } catch {
-      alert('No se pudo guardar la observación.');
+    } catch (err: any) {
+      console.error('upsertTaskEvaluation (observation) failed', err);
+      const code = typeof err?.code === 'string' ? err.code : '';
+      const msg = typeof err?.message === 'string' ? err.message : '';
+      alert(code || msg ? `No se pudo guardar la observación. ${code} ${msg}`.trim() : 'No se pudo guardar la observación.');
     } finally {
       setSavingStudentId('');
     }
@@ -314,7 +409,7 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
                 {tasks.length === 0 ? <option value="">No hay tareas</option> : null}
                 {tasks.map((t) => (
                   <option key={t.id} value={t.id}>
-                    {t.title}
+                    {t.title} ({taskAudienceLabel(t)})
                   </option>
                 ))}
               </select>
@@ -328,6 +423,10 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
 
               {assignedStudentSet.size > 0 ? (
                 <p className="text-xs text-gray-600 mt-1">Asignada a {assignedStudentSet.size} estudiante(s).</p>
+              ) : null}
+
+              {selectedTaskAudience.size === 1 ? (
+                <p className="text-xs text-gray-600 mt-1">Audiencia: {Array.from(selectedTaskAudience)[0]}º.</p>
               ) : null}
             </div>
             <div>
@@ -441,6 +540,13 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
                 <X className="w-6 h-6" />
               </button>
             </div>
+
+            {obsAchievementHint ? (
+              <div className="mb-3 p-3 rounded-lg border border-gray-200 bg-gray-50">
+                <p className="text-xs font-semibold text-gray-700">Texto de logro</p>
+                <p className="text-xs text-gray-700 whitespace-pre-wrap mt-1">{obsAchievementHint}</p>
+              </div>
+            ) : null}
 
             <textarea
               className="input-field min-h-32"

@@ -1,19 +1,23 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { Plus, Search, User, Trash2 } from 'lucide-react';
+import { Plus, Search, User, Trash2, Upload, Download } from 'lucide-react';
 import { Teacher, Classroom, Student } from '../types';
 import { storage } from '../utils/storage';
 import Header from '../components/Header';
 import StudentCard from '../components/StudentCard';
 import CreateStudentModal from '../components/CreateStudentModal';
+import ImportStudentsModal from '../components/ImportStudentsModal';
 import CreateClassroomModal from '../components/CreateClassroomModal';
 import Breadcrumbs from '../components/Breadcrumbs';
-import { deleteGradesForStudents } from '../utils/firestore/grades';
-import { deleteTriangulationObservationsForStudents } from '../utils/firestore/triangulationObservations';
-import { listenStudentsByClassroom, createStudent, deleteStudent } from '../utils/firestore/students';
+import { listenStudentsByClassroom, createStudent, createStudentsBulk, deleteStudent } from '../utils/firestore/students';
 import { listenClassrooms, deleteClassroom, updateClassroom } from '../utils/firestore/classrooms';
 import { doc, increment, updateDoc } from 'firebase/firestore';
 import { db } from '../config/firebase';
+import { deleteEvidenceNotesForStudents } from '../lib/firestore/services/evidenceNotesService';
+import { deleteTaskEvaluationsForStudents } from '../lib/firestore/services/taskEvaluationsService';
+import { fetchCriteria } from '../lib/firestore/services/criteriaFetchService';
+import { fetchCriterionEvaluationsForStudents } from '../lib/firestore/services/xadeExportService';
+import { downloadCsvFile, findUnmappedEvaluatedAreas, generateXadeCsv } from '../logic/xade/xadeExport';
 
 interface ClassroomPageProps {
   teacher: Teacher;
@@ -28,7 +32,60 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
   const [filteredStudents, setFilteredStudents] = useState<Student[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
   const [showEditClassroomModal, setShowEditClassroomModal] = useState(false);
+  const [xadeExporting, setXadeExporting] = useState(false);
+
+  const handleExportXade = async () => {
+    const workspaceId = teacher.workspaceId;
+    if (!workspaceId) {
+      alert('Inicia sesión para exportar.');
+      return;
+    }
+    if (!classroom || !id) return;
+    if (students.length === 0) {
+      alert('No hay estudiantes en el aula.');
+      return;
+    }
+
+    setXadeExporting(true);
+    try {
+      const [criteria, evaluations] = await Promise.all([
+        fetchCriteria(workspaceId),
+        fetchCriterionEvaluationsForStudents({ workspaceId, studentIds: students.map((s) => s.id) }),
+      ]);
+
+      const csv = generateXadeCsv({
+        classroom,
+        students,
+        criteria,
+        criterionEvaluations: evaluations,
+        delimiter: ';',
+      });
+
+      const unmapped = findUnmappedEvaluatedAreas({ criteria, criterionEvaluations: evaluations });
+
+      const safeName = String(classroom.name || 'aula')
+        .trim()
+        .replace(/\s+/g, '_')
+        .replace(/[^\w\-]+/g, '');
+      const course = String(classroom.grade || '').trim().replace(/\s+/g, '');
+      const filename = `XADE_${course || 'curso'}_${safeName || 'aula'}.csv`;
+      downloadCsvFile(filename, csv);
+
+      if (unmapped.length > 0) {
+        const head = unmapped.slice(0, 8).join(' · ');
+        alert(
+          `Aviso: algunas áreas de criterios no se pudieron mapear a columnas XADE y se omitieron del CSV.\n\nÁreas (ejemplos): ${head}${unmapped.length > 8 ? '…' : ''}`
+        );
+      }
+    } catch (e) {
+      console.error('XADE export failed', e);
+      alert('No se pudo exportar el CSV de XADE.');
+    } finally {
+      setXadeExporting(false);
+    }
+  };
 
   useEffect(() => {
     if (!id) return;
@@ -71,7 +128,7 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     setFilteredStudents(filtered);
   };
 
-  const handleCreateStudent = async (form: Pick<Student, 'firstName' | 'lastName' | 'listNumber'>) => {
+  const handleCreateStudent = async (form: Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'level'>) => {
     if (teacher.workspaceId && id) {
       try {
         await createStudent(teacher.workspaceId, {
@@ -94,6 +151,33 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     setShowCreateModal(false);
   };
 
+  const handleImportStudents = async (importRows: Array<Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'level'>>) => {
+    if (!teacher.workspaceId || !id) return;
+    if (importRows.length === 0) return;
+
+    try {
+      const created = await createStudentsBulk(
+        teacher.workspaceId,
+        importRows.map((r) => ({
+          ...r,
+          classroomId: id,
+          progress: 0,
+          averageGrade: 0,
+        }))
+      );
+
+      const classroomRef = doc(db, 'workspaces', teacher.workspaceId, 'classrooms', id);
+      await updateDoc(classroomRef, {
+        studentCount: increment(created),
+        updatedAt: new Date(),
+      });
+    } catch (error) {
+      console.error('Error importing students:', error);
+      alert('Hubo un error al importar estudiantes. Por favor, inténtalo de nuevo.');
+      throw error;
+    }
+  };
+
   const handleEditClassroom = async (form: Pick<Classroom, 'name' | 'grade'>) => {
     if (!teacher.workspaceId || !id) return;
     try {
@@ -110,8 +194,8 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
       if (teacher.workspaceId && id) {
         try {
           await Promise.all([
-            deleteGradesForStudents(teacher.workspaceId, [studentId]),
-            deleteTriangulationObservationsForStudents(teacher.workspaceId, [studentId]),
+            deleteTaskEvaluationsForStudents(teacher.workspaceId, [studentId]),
+            deleteEvidenceNotesForStudents(teacher.workspaceId, [studentId]),
           ]);
           await deleteStudent(teacher.workspaceId, studentId);
           // After deleting the student, update the classroom's student count
@@ -138,10 +222,10 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
     const removedStudentIdsList = students.map(s => s.id);
     Promise.all([
       removedStudentIdsList.length > 0
-        ? deleteGradesForStudents(workspaceId, removedStudentIdsList)
+        ? deleteTaskEvaluationsForStudents(workspaceId, removedStudentIdsList)
         : Promise.resolve(),
       removedStudentIdsList.length > 0
-        ? deleteTriangulationObservationsForStudents(workspaceId, removedStudentIdsList)
+        ? deleteEvidenceNotesForStudents(workspaceId, removedStudentIdsList)
         : Promise.resolve(),
     ])
       .then(() => deleteClassroom(workspaceId, id))
@@ -186,6 +270,23 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
               title="Editar aula"
             >
               Editar Aula
+            </button>
+            <button
+              onClick={() => setShowImportModal(true)}
+              className="btn-secondary flex items-center justify-center gap-2"
+              title="Importar estudiantes desde CSV"
+            >
+              <Upload className="w-5 h-5" />
+              Importar
+            </button>
+            <button
+              onClick={handleExportXade}
+              className="btn-secondary flex items-center justify-center gap-2"
+              title="Exportar CSV compatible con XADE"
+              disabled={!teacher.workspaceId || xadeExporting}
+            >
+              <Download className="w-5 h-5" />
+              {xadeExporting ? 'Exportando…' : 'Exportar XADE'}
             </button>
             <button
               onClick={handleDeleteClassroom}
@@ -257,6 +358,14 @@ export default function ClassroomPage({ teacher, onLogout }: ClassroomPageProps)
         <CreateStudentModal
           onClose={() => setShowCreateModal(false)}
           onSubmit={handleCreateStudent}
+        />
+      )}
+
+      {showImportModal && (
+        <ImportStudentsModal
+          onClose={() => setShowImportModal(false)}
+          existingStudents={students}
+          onImport={handleImportStudents}
         />
       )}
 

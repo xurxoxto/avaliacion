@@ -4,8 +4,8 @@ import { Student } from '../types';
 
 interface CreateStudentModalProps {
   onClose: () => void;
-  onSubmit: (student: Pick<Student, 'firstName' | 'lastName' | 'listNumber'>) => void;
-  initial?: Pick<Student, 'firstName' | 'lastName' | 'listNumber'>;
+  onSubmit: (student: Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'level'>) => void;
+  initial?: Pick<Student, 'firstName' | 'lastName' | 'listNumber' | 'level'>;
   title?: string;
   submitLabel?: string;
 }
@@ -14,6 +14,7 @@ export default function CreateStudentModal({ onClose, onSubmit, initial, title, 
   const [firstName, setFirstName] = useState(initial?.firstName ?? '');
   const [lastName, setLastName] = useState(initial?.lastName ?? '');
   const [listNumber, setListNumber] = useState(initial?.listNumber ? String(initial.listNumber) : '');
+  const [level, setLevel] = useState<'5' | '6' | ''>(initial?.level === 5 ? '5' : initial?.level === 6 ? '6' : '');
   const [error, setError] = useState('');
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -35,10 +36,16 @@ export default function CreateStudentModal({ onClose, onSubmit, initial, title, 
       return;
     }
 
+    if (level !== '' && level !== '5' && level !== '6') {
+      setError('Selecciona un nivel válido (5º o 6º)');
+      return;
+    }
+
     onSubmit({
       firstName: firstName.trim(),
       lastName: lastName.trim(),
       listNumber: parseInt(listNumber),
+      level: level === '' ? undefined : (Number(level) as 5 | 6),
     });
   };
 
@@ -100,6 +107,22 @@ export default function CreateStudentModal({ onClose, onSubmit, initial, title, 
               min="1"
               required
             />
+          </div>
+
+          <div>
+            <label htmlFor="level" className="block text-sm font-medium text-gray-700 mb-2">
+              Nivel
+            </label>
+            <select
+              id="level"
+              value={level}
+              onChange={(e) => setLevel(e.target.value as any)}
+              className="input-field"
+            >
+              <option value="">(sin especificar)</option>
+              <option value="5">5º</option>
+              <option value="6">6º</option>
+            </select>
           </div>
 
           {error && (

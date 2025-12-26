@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, X, Trash2 } from 'lucide-react';
-import type { Classroom, Competencia, LearningSituation, LearningTask, LearningSituationType, Student, SubCompetencia, TaskCompetencyLink, Teacher } from '../types';
+import type { AudienceLevel, Classroom, Competencia, LearningSituation, LearningTask, LearningSituationType, Student, SubCompetencia, TaskCompetencyLink, Teacher } from '../types';
 import Header from '../components/Header';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { listenCompetencias } from '../utils/firestore/competencias';
@@ -45,6 +45,9 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
   const [editingTaskId, setEditingTaskId] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
+  const [taskAudienceLevels, setTaskAudienceLevels] = useState<AudienceLevel[]>([5, 6]);
+  const [achievementText5, setAchievementText5] = useState('');
+  const [achievementText6, setAchievementText6] = useState('');
   const [assignedStudentIds, setAssignedStudentIds] = useState<string[]>([]);
   const [assignmentSearch, setAssignmentSearch] = useState('');
   const [linkDrafts, setLinkDrafts] = useState<
@@ -117,6 +120,9 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
     setEditingTaskId('');
     setTaskTitle('');
     setTaskDescription('');
+    setTaskAudienceLevels([5, 6]);
+    setAchievementText5('');
+    setAchievementText6('');
     setAssignedStudentIds([]);
     setAssignmentSearch('');
     setLinkDrafts([]);
@@ -130,6 +136,15 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
     setEditingTaskId(t.id);
     setTaskTitle(t.title || '');
     setTaskDescription(t.description || '');
+    const rawAudience = Array.isArray((t as any).audienceLevels) ? (t as any).audienceLevels : [];
+    const levels = rawAudience
+      .map((x: any) => Number(x))
+      .filter((n: any) => n === 5 || n === 6) as AudienceLevel[];
+    const uniq = Array.from(new Set(levels));
+    setTaskAudienceLevels(uniq.length === 1 ? uniq : [5, 6]);
+    const ach = (t as any).achievementTextByLevel;
+    setAchievementText5(typeof ach?.[5] === 'string' ? String(ach[5]) : '');
+    setAchievementText6(typeof ach?.[6] === 'string' ? String(ach[6]) : '');
     setAssignedStudentIds(Array.isArray((t as any).assignedStudentIds) ? (t as any).assignedStudentIds : []);
     setAssignmentSearch('');
     const raw = Array.isArray(t.links) ? t.links : [];
@@ -332,6 +347,15 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
       return;
     }
 
+    const audience = Array.from(new Set((taskAudienceLevels || []).filter((x) => x === 5 || x === 6)));
+    const effectiveAudience: AudienceLevel[] = audience.length === 1 ? (audience as AudienceLevel[]) : [5, 6];
+
+    const t5 = String(achievementText5 || '').trim();
+    const t6 = String(achievementText6 || '').trim();
+    const achievementTextByLevel: Partial<Record<AudienceLevel, string>> = {};
+    if (t5) achievementTextByLevel[5] = t5;
+    if (t6) achievementTextByLevel[6] = t6;
+
     const normalizedLinks: TaskCompetencyLink[] = [];
     for (const d of linkDrafts) {
       const competenciaId = String(d.competenciaId || '').trim();
@@ -359,6 +383,8 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
         title,
         description: taskDescription.trim(),
         links: normalizedLinks,
+        audienceLevels: effectiveAudience.length === 2 ? undefined : effectiveAudience,
+        achievementTextByLevel: Object.keys(achievementTextByLevel).length > 0 ? achievementTextByLevel : undefined,
         assignedStudentIds,
       });
       setTaskModalOpen(false);
@@ -604,6 +630,61 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">Descripción</label>
                 <textarea className="input-field" rows={3} value={taskDescription} onChange={(e) => setTaskDescription(e.target.value)} />
+              </div>
+
+              <div className="border border-gray-200 rounded-lg p-3">
+                <p className="text-sm font-semibold text-gray-900">Audiencia (internivel)</p>
+                <p className="text-xs text-gray-600 mt-1">Define si la tarea es común (5º+6º) o específica por nivel.</p>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className={taskAudienceLevels.length === 2 ? 'btn-primary' : 'btn-secondary'}
+                    onClick={() => setTaskAudienceLevels([5, 6])}
+                    title="Aplicar a 5º y 6º"
+                  >
+                    Ambos
+                  </button>
+                  <button
+                    type="button"
+                    className={taskAudienceLevels.length === 1 && taskAudienceLevels[0] === 5 ? 'btn-primary' : 'btn-secondary'}
+                    onClick={() => setTaskAudienceLevels([5])}
+                    title="Solo 5º"
+                  >
+                    5º
+                  </button>
+                  <button
+                    type="button"
+                    className={taskAudienceLevels.length === 1 && taskAudienceLevels[0] === 6 ? 'btn-primary' : 'btn-secondary'}
+                    onClick={() => setTaskAudienceLevels([6])}
+                    title="Solo 6º"
+                  >
+                    6º
+                  </button>
+                </div>
+
+                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Texto de logro (5º) (opcional)</label>
+                    <textarea
+                      className="input-field"
+                      rows={2}
+                      value={achievementText5}
+                      onChange={(e) => setAchievementText5(e.target.value)}
+                      placeholder="Qué se espera observar en 5º…"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Texto de logro (6º) (opcional)</label>
+                    <textarea
+                      className="input-field"
+                      rows={2}
+                      value={achievementText6}
+                      onChange={(e) => setAchievementText6(e.target.value)}
+                      placeholder="Qué se espera observar en 6º…"
+                    />
+                  </div>
+                </div>
               </div>
 
               <div className="border border-gray-200 rounded-lg p-3">

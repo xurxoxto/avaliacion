@@ -9,23 +9,22 @@ import LearningSituationsPage from './pages/LearningSituationsPage';
 import QuickEvaluationPage from './pages/QuickEvaluationPage';
 import LearningSituationDetailPage from './pages/LearningSituationDetailPage';
 import LoginPage from './pages/LoginPage';
-import { startCloudSync, stopCloudSync } from './utils/cloudSync';
 import { Teacher } from './types';
 import { auth } from './config/firebase';
 import { onAuthStateChanged, signOut } from 'firebase/auth';
 import ErrorBoundary from './components/ErrorBoundary';
-import { useRef } from 'react';
+import { storage } from './utils/storage';
 
 function App() {
   const [teacher, setTeacher] = useState<Teacher | null>(null);
   const [loading, setLoading] = useState(true);
-  const activeWorkspaceId = useRef<string | null>(null);
 
   useEffect(() => {
+    // Hard cleanup: remove legacy local-only datasets we no longer use.
+    storage.cleanupLegacy();
+
     const unsub = onAuthStateChanged(auth, (user) => {
       if (!user || !user.email) {
-        activeWorkspaceId.current = null;
-        stopCloudSync();
         setTeacher(null);
         setLoading(false);
         return;
@@ -33,8 +32,6 @@ function App() {
 
       const userEmail = user.email.toLowerCase();
       if (!userEmail.endsWith('@edu.xunta.gal')) {
-        activeWorkspaceId.current = null;
-        stopCloudSync();
         void signOut(auth).catch(() => {
           // ignore
         });
@@ -52,19 +49,11 @@ function App() {
         classroomIds: [],
       };
       setTeacher(next);
-      if (next.workspaceId) {
-        if (activeWorkspaceId.current !== next.workspaceId) {
-          stopCloudSync();
-          startCloudSync(next.workspaceId);
-          activeWorkspaceId.current = next.workspaceId;
-        }
-      }
       setLoading(false);
     });
 
     return () => {
       unsub();
-      stopCloudSync();
     };
   }, []);
 

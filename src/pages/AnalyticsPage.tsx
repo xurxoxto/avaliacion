@@ -14,13 +14,15 @@ import {
   LineElement,
 } from 'chart.js';
 import { Bar, Doughnut, Line } from 'react-chartjs-2';
-import { Teacher, Student, EvaluationEntry, Classroom, Competencia, TriangulationGrade } from '../types';
+import { Teacher, Student, Classroom, Competencia, TaskEvaluation, EvidenceNote } from '../types';
 import { storage } from '../utils/storage';
 import Header from '../components/Header';
-import { listenAllGrades } from '../utils/firestore/grades';
 import { listenCompetencias, seedCompetenciasIfEmpty } from '../utils/firestore/competencias';
-import { makeStudentCompetencyKey, useTriangulationGrades } from '../hooks/useTriangulationGrades';
-import { GRADE_COLOR_CLASS, GRADE_LABEL_ES } from '../utils/triangulation/gradeScale';
+import { listenStudents } from '../utils/firestore/students';
+import { listenClassrooms } from '../utils/firestore/classrooms';
+import { GRADE_COLOR_CLASS, GRADE_LABEL_ES, gradeKeyFromNumeric } from '../utils/triangulation/gradeScale';
+import { listenAllTaskEvaluations } from '../lib/firestore/services/taskEvaluationsService';
+import { listenAllEvidenceNotes } from '../lib/firestore/services/evidenceNotesService';
 
 // Register ChartJS components
 ChartJS.register(
@@ -44,11 +46,11 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
   const navigate = useNavigate();
   const [students, setStudents] = useState<Student[]>([]);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
-  const [evaluations, setEvaluations] = useState<EvaluationEntry[]>([]);
+  const [taskEvaluations, setTaskEvaluations] = useState<TaskEvaluation[]>([]);
+  const [evidenceNotes, setEvidenceNotes] = useState<EvidenceNote[]>([]);
   const [competencias, setCompetencias] = useState<Competencia[]>([]);
   const [selectedClassroomIds, setSelectedClassroomIds] = useState<string[]>(teacher.classroomIds || []);
   const [studentQuery, setStudentQuery] = useState('');
-  const [triGrades, setTriGrades] = useState<TriangulationGrade[]>([]);
   const [stats, setStats] = useState({
     totalStudents: 0,
     averageGrade: 0,
@@ -57,8 +59,39 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
   });
 
   useEffect(() => {
-    loadData();
+    // Local fallback (offline / before listeners hydrate)
+    setStudents(storage.getStudents());
+    setClassrooms(storage.getClassrooms());
   }, []);
+
+  useEffect(() => {
+    if (!teacher.workspaceId) {
+      // Legacy/offline mode: keep existing local data only.
+      return;
+    }
+
+    const unsubStudents = listenStudents(teacher.workspaceId, (items) => {
+      setStudents(items);
+      storage.saveStudents(items);
+    });
+    const unsubClassrooms = listenClassrooms(teacher.workspaceId, (items) => {
+      setClassrooms(items);
+      storage.saveClassrooms(items);
+    });
+    const unsubTaskEvaluations = listenAllTaskEvaluations(teacher.workspaceId, (items) => {
+      setTaskEvaluations(items);
+    });
+    const unsubEvidenceNotes = listenAllEvidenceNotes(teacher.workspaceId, (items) => {
+      setEvidenceNotes(items);
+    });
+
+    return () => {
+      unsubStudents();
+      unsubClassrooms();
+      unsubTaskEvaluations();
+      unsubEvidenceNotes();
+    };
+  }, [teacher.workspaceId]);
 
   useEffect(() => {
     if (!teacher.workspaceId) {
@@ -75,37 +108,11 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
   }, [teacher.workspaceId]);
 
   useEffect(() => {
-    if (!teacher.workspaceId) return;
-    const unsub = listenAllGrades(teacher.workspaceId, (gs) => setTriGrades(gs));
-    return () => unsub();
-  }, [teacher.workspaceId]);
-
-  useEffect(() => {
-    const handler = (evt: Event) => {
-      const custom = evt as CustomEvent<{ source?: string }>;
-      if (custom.detail?.source === 'remote') loadData();
-    };
-    window.addEventListener('avaliacion:data-changed', handler);
-    return () => window.removeEventListener('avaliacion:data-changed', handler);
-  }, []);
-
-  const loadData = () => {
-    const allStudents = storage.getStudents();
-    const allEvaluations = storage.getEvaluations();
-    const allClassrooms = storage.getClassrooms();
-
-    setStudents(allStudents);
-    setEvaluations(allEvaluations);
-    setClassrooms(allClassrooms);
-    // Competencias come from Firestore when logged in; keep local fallback for offline/logout.
-    if (!teacher.workspaceId) setCompetencias(storage.getCompetencias());
-
+    // If user has no explicit classroomIds, default to all known classrooms.
     if (!teacher.classroomIds || teacher.classroomIds.length === 0) {
-      setSelectedClassroomIds(allClassrooms.map(c => c.id));
+      setSelectedClassroomIds(classrooms.map((c) => c.id));
     }
-
-    // Stats will be derived from filtered data below
-  };
+  }, [classrooms, teacher.classroomIds]);
 
   const classroomNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -131,41 +138,104 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
     );
   }, [students, includedClassroomIds, studentQuery]);
 
-  const filteredEvaluations = useMemo(() => {
-    const studentIds = new Set(filteredStudents.map(s => s.id));
-    return evaluations.filter(e => studentIds.has(e.studentId));
-  }, [evaluations, filteredStudents]);
+  const filteredTaskEvaluations = useMemo(() => {
+    const studentIds = new Set(filteredStudents.map((s) => s.id));
+    return taskEvaluations.filter((e) => studentIds.has(e.studentId));
+  }, [taskEvaluations, filteredStudents]);
 
-  const filteredTriGrades = useMemo(() => {
-    const studentIds = new Set(filteredStudents.map(s => s.id));
-    return triGrades.filter(g => studentIds.has(g.studentId));
-  }, [triGrades, filteredStudents]);
-
-  const tri = useTriangulationGrades({
-    students: filteredStudents,
-    competencias,
-    grades: filteredTriGrades,
-  });
+  const filteredEvidenceNotes = useMemo(() => {
+    const studentIds = new Set(filteredStudents.map((s) => s.id));
+    return evidenceNotes.filter((n) => studentIds.has(n.studentId));
+  }, [evidenceNotes, filteredStudents]);
 
   const studentEvalStats = useMemo(() => {
     const map = new Map<string, { count: number; sum: number; lastDate: number | null }>();
     for (const s of filteredStudents) {
       map.set(s.id, { count: 0, sum: 0, lastDate: null });
     }
-    for (const e of filteredEvaluations) {
+    for (const e of filteredTaskEvaluations) {
       const entry = map.get(e.studentId);
       if (!entry) continue;
       entry.count += 1;
-      entry.sum += e.rating;
-      const t = new Date(e.date).getTime();
+      entry.sum += e.numericalValue || 0;
+      const t = (e.timestamp instanceof Date ? e.timestamp : new Date(e.timestamp)).getTime();
+      entry.lastDate = entry.lastDate === null ? t : Math.max(entry.lastDate, t);
+    }
+
+    for (const n of filteredEvidenceNotes) {
+      const entry = map.get(n.studentId);
+      if (!entry) continue;
+      entry.count += 1;
+      entry.sum += n.numericValue || 0;
+      const t = (n.createdAt instanceof Date ? n.createdAt : new Date(n.createdAt)).getTime();
       entry.lastDate = entry.lastDate === null ? t : Math.max(entry.lastDate, t);
     }
     return map;
-  }, [filteredStudents, filteredEvaluations]);
+  }, [filteredStudents, filteredTaskEvaluations, filteredEvidenceNotes]);
+
+  const studentCompetencyAgg = useMemo(() => {
+    // Aggregate evidence into student+competency buckets.
+    const map = new Map<string, { sumW: number; sumVW: number }>();
+
+    for (const ev of filteredTaskEvaluations) {
+      const links = Array.isArray(ev.links) ? ev.links : [];
+      const validLinks = links
+        .map((l) => {
+          const compId = String((l as any)?.competenciaId ?? '').trim();
+          if (!compId) return null;
+          const w = typeof (l as any)?.weight === 'number' ? (l as any).weight : Number((l as any)?.weight ?? 0);
+          const weight = Number.isFinite(w) ? Math.max(0, w) : 0;
+          return { competenciaId: compId, weight };
+        })
+        .filter(Boolean) as Array<{ competenciaId: string; weight: number }>;
+
+      if (validLinks.length === 0) continue;
+
+      // Normalize weights per evaluation.
+      const totalW = validLinks.reduce((acc, l) => acc + (l.weight > 0 ? l.weight : 0), 0);
+      const linksByComp = new Map<string, Array<{ competenciaId: string; weight: number }>>();
+      if (totalW <= 0) {
+        for (const l of validLinks) {
+          const arr = linksByComp.get(l.competenciaId) || [];
+          arr.push(l);
+          linksByComp.set(l.competenciaId, arr);
+        }
+      }
+      const defaultCompW = totalW > 0 ? 0 : 1 / Math.max(1, linksByComp.size);
+
+      for (const l of validLinks) {
+        const perLinkW =
+          totalW > 0
+            ? l.weight / totalW
+            : defaultCompW / Math.max(1, (linksByComp.get(l.competenciaId) || []).length);
+
+        const key = `${ev.studentId}__${l.competenciaId}`;
+        const current = map.get(key) || { sumW: 0, sumVW: 0 };
+        current.sumW += perLinkW;
+        current.sumVW += (ev.numericalValue || 0) * perLinkW;
+        map.set(key, current);
+      }
+    }
+
+    for (const n of filteredEvidenceNotes) {
+      const ids = Array.from(new Set((n.competenciaIds || []).map(String).map((s) => s.trim()).filter(Boolean)));
+      if (ids.length === 0) continue;
+      const perW = 1 / ids.length;
+      for (const compId of ids) {
+        const key = `${n.studentId}__${compId}`;
+        const current = map.get(key) || { sumW: 0, sumVW: 0 };
+        current.sumW += perW;
+        current.sumVW += (n.numericValue || 0) * perW;
+        map.set(key, current);
+      }
+    }
+
+    return map;
+  }, [filteredTaskEvaluations, filteredEvidenceNotes]);
 
   useEffect(() => {
     const totalStudents = filteredStudents.length;
-    const totalEvaluations = filteredEvaluations.length;
+    const totalEvaluations = filteredTaskEvaluations.length + filteredEvidenceNotes.length;
     const averageGrade = totalStudents > 0
       ? filteredStudents.reduce((sum, s) => {
           const es = studentEvalStats.get(s.id);
@@ -180,7 +250,66 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
     }).length;
 
     setStats({ totalStudents, averageGrade, totalEvaluations, studentsAbove7 });
-  }, [filteredStudents, filteredEvaluations, studentEvalStats]);
+  }, [filteredStudents, filteredTaskEvaluations.length, filteredEvidenceNotes.length, studentEvalStats]);
+
+  const competencyAgg = useMemo(() => {
+    // Aggregate task evaluations into competencia buckets using links + weights.
+    const map = new Map<string, { sumW: number; sumVW: number }>();
+
+    for (const ev of filteredTaskEvaluations) {
+      const links = Array.isArray(ev.links) ? ev.links : [];
+      const validLinks = links
+        .map((l) => {
+          const compId = String((l as any)?.competenciaId ?? '').trim();
+          if (!compId) return null;
+          const w = typeof (l as any)?.weight === 'number' ? (l as any).weight : Number((l as any)?.weight ?? 0);
+          const weight = Number.isFinite(w) ? Math.max(0, w) : 0;
+          return { competenciaId: compId, weight };
+        })
+        .filter(Boolean) as Array<{ competenciaId: string; weight: number }>;
+
+      if (validLinks.length === 0) continue;
+
+      // Normalize weights per evaluation.
+      const totalW = validLinks.reduce((acc, l) => acc + (l.weight > 0 ? l.weight : 0), 0);
+      const linksByComp = new Map<string, Array<{ competenciaId: string; weight: number }>>();
+      if (totalW <= 0) {
+        for (const l of validLinks) {
+          const arr = linksByComp.get(l.competenciaId) || [];
+          arr.push(l);
+          linksByComp.set(l.competenciaId, arr);
+        }
+      }
+      const defaultCompW = totalW > 0 ? 0 : 1 / Math.max(1, linksByComp.size);
+
+      for (const l of validLinks) {
+        const perLinkW =
+          totalW > 0
+            ? l.weight / totalW
+            : defaultCompW / Math.max(1, (linksByComp.get(l.competenciaId) || []).length);
+
+        const current = map.get(l.competenciaId) || { sumW: 0, sumVW: 0 };
+        current.sumW += perLinkW;
+        current.sumVW += (ev.numericalValue || 0) * perLinkW;
+        map.set(l.competenciaId, current);
+      }
+    }
+
+    // Aggregate ad-hoc evidence notes: split equally across selected competencias.
+    for (const n of filteredEvidenceNotes) {
+      const ids = Array.from(new Set((n.competenciaIds || []).map(String).map((s) => s.trim()).filter(Boolean)));
+      if (ids.length === 0) continue;
+      const perW = 1 / ids.length;
+      for (const compId of ids) {
+        const current = map.get(compId) || { sumW: 0, sumVW: 0 };
+        current.sumW += perW;
+        current.sumVW += (n.numericValue || 0) * perW;
+        map.set(compId, current);
+      }
+    }
+
+    return map;
+  }, [filteredTaskEvaluations, filteredEvidenceNotes]);
 
   // Competence distribution data
   const competenceData = {
@@ -189,9 +318,9 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
       {
         label: 'Promedio por Competencia',
         data: competencias.map(comp => {
-          const compEvals = filteredEvaluations.filter(e => e.competenciaId === comp.id);
-          if (compEvals.length === 0) return 0;
-          return compEvals.reduce((sum, e) => sum + e.rating, 0) / compEvals.length;
+          const agg = competencyAgg.get(comp.id);
+          if (!agg || agg.sumW <= 0) return 0;
+          return agg.sumVW / agg.sumW;
         }),
         backgroundColor: 'rgba(59, 130, 246, 0.5)',
         borderColor: 'rgb(59, 130, 246)',
@@ -245,10 +374,18 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
     labels: last30Days.map(d => d.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' })),
     datasets: [
       {
-        label: 'Evaluaciones por día',
+        label: 'Evidencias por día',
         data: last30Days.map(date => {
           const dateStr = date.toDateString();
-          return filteredEvaluations.filter(e => new Date(e.date).toDateString() === dateStr).length;
+          const taskCount = filteredTaskEvaluations.filter(e => {
+            const t = (e.timestamp instanceof Date ? e.timestamp : new Date(e.timestamp));
+            return t.toDateString() === dateStr;
+          }).length;
+          const noteCount = filteredEvidenceNotes.filter(n => {
+            const t = (n.createdAt instanceof Date ? n.createdAt : new Date(n.createdAt));
+            return t.toDateString() === dateStr;
+          }).length;
+          return taskCount + noteCount;
         }),
         borderColor: 'rgb(59, 130, 246)',
         backgroundColor: 'rgba(59, 130, 246, 0.1)',
@@ -520,25 +657,24 @@ export default function AnalyticsPage({ teacher, onLogout }: AnalyticsPageProps)
                 </thead>
                 <tbody>
                   {filteredStudents.map((s) => {
-                    const fk = tri.finalAvgKey.get(s.id);
-                    const fn = tri.finalAvgNumeric.get(s.id);
+                    const es = studentEvalStats.get(s.id);
+                    const fn = es && es.count > 0 ? es.sum / es.count : 0;
+                    const fk = gradeKeyFromNumeric(fn);
                     return (
                       <tr key={s.id} className="border-t border-gray-100">
                         <td className="py-2.5 pr-3 font-medium text-gray-900">{s.lastName}, {s.firstName}</td>
                         <td className="py-2.5 pr-3">
-                          {fk ? (
-                            <span className="inline-flex items-center gap-2">
-                              <span className={`inline-flex w-3 h-3 rounded-full ${GRADE_COLOR_CLASS[fk]}`} />
-                              <span className="text-gray-900 font-semibold">{GRADE_LABEL_ES[fk]}</span>
-                              <span className="text-gray-600">{typeof fn === 'number' ? `(${fn.toFixed(1)})` : ''}</span>
-                            </span>
-                          ) : (
-                            <span className="text-gray-500">-</span>
-                          )}
+                          <span className="inline-flex items-center gap-2">
+                            <span className={`inline-flex w-3 h-3 rounded-full ${GRADE_COLOR_CLASS[fk]}`} />
+                            <span className="text-gray-900 font-semibold">{GRADE_LABEL_ES[fk]}</span>
+                            <span className="text-gray-600">({Number.isFinite(fn) ? fn.toFixed(1) : '0.0'})</span>
+                          </span>
                         </td>
                         {competencias.map((c) => {
-                          const key = makeStudentCompetencyKey(s.id, c.id);
-                          const ck = tri.competencyAvgKey.get(key);
+                          const aggKey = `${s.id}__${c.id}`;
+                          const agg = studentCompetencyAgg.get(aggKey);
+                          const avg = agg && agg.sumW > 0 ? agg.sumVW / agg.sumW : null;
+                          const ck = avg == null ? null : gradeKeyFromNumeric(avg);
                           return (
                             <td key={c.id} className="py-2.5 pr-3">
                               {ck ? (
