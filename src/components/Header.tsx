@@ -81,8 +81,8 @@ export default function Header({ teacher, onLogout, showSearch = true }: HeaderP
             >
               <BookOpen className="w-8 h-8 text-primary-600" />
               <div className="min-w-0">
-                <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Sistema de Evaluación</h1>
-                <p className="text-sm text-gray-600 hidden sm:block truncate">CEIP Galicia</p>
+                <h1 className="text-lg sm:text-xl font-bold text-gray-900 truncate">Senda</h1>
+                <p className="text-sm text-gray-600 hidden sm:block truncate">Sistema de Evaluación</p>
               </div>
             </div>
           </div>

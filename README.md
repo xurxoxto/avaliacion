@@ -1,4 +1,4 @@
-# Sistema de Evaluación - CEIP Galicia
+# Senda - Sistema de Evaluación
 
 Sistema moderno de evaluación para profesores construido con React, TypeScript, TailwindCSS y Node.js/Express.
 
