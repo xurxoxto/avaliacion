@@ -17,6 +17,7 @@ import type { GradeKey } from '../types';
 import { GRADE_LABEL_ES, GRADE_VALUE, gradeKeyFromNumeric } from '../utils/triangulation/gradeScale';
 import { GRADE_COLOR_CLASS } from '../utils/triangulation/gradeScale';
 import { normalizeCompetenceCode } from '../data/competencias';
+import { getCriteriosPuenteTerminal } from '../data/criteriosPuenteTerminal';
 import { addEvidenceNote, deleteEvidenceNotesForStudent, listenEvidenceNotesForStudent } from '../lib/firestore/services/evidenceNotesService';
 import { deleteTaskEvaluationsForStudent } from '../lib/firestore/services/taskEvaluationsService';
 import type { Criterion } from '../logic/criteria/types';
@@ -61,6 +62,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
   const [classroom, setClassroom] = useState<Classroom | null>(null);
   const [students, setStudents] = useState<Student[]>(storage.getStudents());
   const [competencias, setCompetencias] = useState(storage.getCompetencias());
+  const criterios = useMemo(() => getCriteriosPuenteTerminal(), []);
   const [showEditStudentModal, setShowEditStudentModal] = useState(false);
   const [showLevelsInfo, setShowLevelsInfo] = useState(false);
 
@@ -77,6 +79,18 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
       if (!v) return null;
       if (competenciaIdSet.has(v)) return v;
 
+      // If it's a criteriaId, resolve to its DO competencies
+      const crit = criterios.find(c => c.id === v);
+      if (crit) {
+        // Return the first DO as competency (simplified)
+        const firstDo = crit.descriptores[0];
+        if (firstDo) {
+          const normalized = normalizeCompetenceCode(firstDo);
+          const mapped = competenciaIdByCode.get(normalized);
+          if (mapped) return mapped;
+        }
+      }
+
       const normalized = normalizeCompetenceCode(v);
       const mapped = competenciaIdByCode.get(normalized);
       if (mapped) return mapped;
@@ -87,7 +101,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
 
       return null;
     };
-  }, [competenciaIdByCode, competenciaIdSet]);
+  }, [competenciaIdByCode, competenciaIdSet, criterios]);
 
   const obsSectionRef = useRef<HTMLDivElement | null>(null);
   const didAutoFocusObsRef = useRef(false);
@@ -576,7 +590,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
 
       const links = Array.isArray(ev.links) ? ev.links : [];
       for (const l of links) {
-        const compId = resolveCompetenciaId(l?.competenciaId);
+        const compId = resolveCompetenciaId((l as any)?.criteriaId);
         if (!compId) continue;
         const arr = byComp.get(compId);
         const item: TaskEv = {
@@ -673,7 +687,7 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
       const codes = Array.from(
         new Set(
           links
-            .map((l) => resolveCompetenciaId(l?.competenciaId))
+            .map((l) => resolveCompetenciaId((l as any)?.criteriaId))
             .filter(Boolean)
             .map((cid) => codeByCompetenciaId.get(String(cid)) || String(cid))
             .filter(Boolean)

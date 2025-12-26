@@ -12,26 +12,24 @@ import {
   setDoc,
 } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import type { AudienceLevel, LearningTask, TaskCompetencyLink } from '../../../types';
+import type { AudienceLevel, LearningTask, TaskCriteriaLink } from '../../../types';
 
 const SUBCOLLECTION = 'tasks';
 
-function normalizeLinks(value: any): TaskCompetencyLink[] {
+function normalizeLinks(value: any): TaskCriteriaLink[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((x: any) => {
-      const competenciaId = String(x?.competenciaId ?? '').trim();
-      if (!competenciaId) return null;
-      const subCompetenciaId = String(x?.subCompetenciaId ?? '').trim();
+      const criteriaId = String(x?.criteriaId ?? '').trim();
+      if (!criteriaId) return null;
       const weightNum = typeof x?.weight === 'number' ? x.weight : Number(x?.weight ?? 0);
       const weight = Number.isFinite(weightNum) ? Math.max(0, Math.min(100, weightNum)) : 0;
       return {
-        competenciaId,
-        ...(subCompetenciaId ? { subCompetenciaId } : null),
+        criteriaId,
         weight,
-      } as TaskCompetencyLink;
+      } as TaskCriteriaLink;
     })
-    .filter(Boolean) as TaskCompetencyLink[];
+    .filter(Boolean) as TaskCriteriaLink[];
 }
 
 function normalizeAudienceLevels(value: any): AudienceLevel[] | undefined {

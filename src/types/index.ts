@@ -53,14 +53,14 @@ export interface LearningSituation {
   type: LearningSituationType;
   /** Denormalized list of competency IDs this situation contributes to. */
   relatedCompetencyIds: string[];
+  /** Associated evaluation criteria IDs (puente/terminal). */
+  criterioIds?: string[];
   createdAt: Date;
   updatedAt: Date;
 }
 
-export interface TaskCompetencyLink {
-  competenciaId: string;
-  /** Optional: link to a specific sub-competencia for precision. */
-  subCompetenciaId?: string;
+export interface TaskCriteriaLink {
+  criteriaId: string;
   /** Manual weight (0-100). Interpreted within the task. */
   weight: number;
 }
@@ -72,8 +72,8 @@ export interface LearningTask {
   learningSituationId: string;
   title: string;
   description: string;
-  /** Weighted links to competencias/subcompetencias (manual). */
-  links: TaskCompetencyLink[];
+  /** Weighted links to evaluation criteria. */
+  links: TaskCriteriaLink[];
   /** Optional: which internivel levels this task applies to. Missing/empty means both (5º and 6º). */
   audienceLevels?: AudienceLevel[];
   /** Optional: achievement text per level (used as teacher-facing guidance). */
@@ -105,7 +105,7 @@ export interface TaskEvaluation {
   rating: GradeKey;
   numericalValue: number;
   /** Copied at write time from task.links for denormalization. */
-  links: TaskCompetencyLink[];
+  links: TaskCriteriaLink[];
   observation?: string;
   /** Snapshot of task-level achievement text (per student level) at evaluation time. */
   achievementTextSnapshot?: string;

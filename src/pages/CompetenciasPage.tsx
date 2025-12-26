@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus, Save, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Save, Trash2, Edit3 } from 'lucide-react';
 import Header from '../components/Header';
 import { storage } from '../utils/storage';
 import type { Competencia, SubCompetencia, Teacher } from '../types';
+import type { Criterion } from '../logic/criteria/types';
 import { useRemoteRefresh } from '../utils/useRemoteRefresh';
 import {
   LOMLOE_COMPETENCE_CODES,
@@ -16,6 +17,12 @@ import {
   seedCompetenciasIfEmpty,
   upsertCompetencia,
 } from '../utils/firestore/competencias';
+import {
+  listenCriteria,
+  upsertCriterion,
+  deleteCriterion,
+  seedCriteriaFromCSV,
+} from '../lib/firestore/services/criteriaService';
 
 interface CompetenciasPageProps {
   teacher: Teacher;
@@ -46,6 +53,23 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
   });
 
   const [newComp, setNewComp] = useState({ code: '', name: '', description: '' });
+
+  const [criteria, setCriteria] = useState<Criterion[]>([]);
+  const [editingCriterionId, setEditingCriterionId] = useState<string>('');
+  const [newCriterion, setNewCriterion] = useState({
+    id: '',
+    course: 5 as 5 | 6,
+    area: '',
+    text: '',
+    descriptorCodes: [] as string[],
+  });
+  const [activeTab, setActiveTab] = useState<'competencias' | 'criterios'>('competencias');
+  const [isSeedingCriteria, setIsSeedingCriteria] = useState(false);
+
+  // Search states
+  const [competenciasSearch, setCompetenciasSearch] = useState('');
+  const [criteriosSearch, setCriteriosSearch] = useState('');
+  const [criteriosGroupBy, setCriteriosGroupBy] = useState<'area' | 'course' | 'competencia'>('area');
 
   const recomputePending = () => {
     setPendingCount(saveTimersRef.current.size + inflightRef.current.size + dirtyRef.current.size);
@@ -107,8 +131,13 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
       setCompetencias(items);
     });
 
+    const unsubCriteria = listenCriteria(teacher.workspaceId, (items) => {
+      setCriteria(items);
+    });
+
     return () => {
       unsub();
+      unsubCriteria();
       // Cancel any pending local timers
       for (const t of saveTimersRef.current.values()) window.clearTimeout(t);
       saveTimersRef.current.clear();
@@ -133,20 +162,37 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
     return LOMLOE_COMPETENCE_CODES.every((c) => codes.has(c));
   }, [competencias]);
 
+  // Filter competencias
+  const filteredCompetencias = useMemo(() => {
+    if (!competenciasSearch) return competencias;
+    const searchLower = competenciasSearch.toLowerCase();
+    return competencias.filter(comp =>
+      comp.code.toLowerCase().includes(searchLower) ||
+      comp.name.toLowerCase().includes(searchLower) ||
+      (comp.description && comp.description.toLowerCase().includes(searchLower)) ||
+      comp.subCompetencias?.some(sub =>
+        (sub.code && sub.code.toLowerCase().includes(searchLower)) ||
+        sub.name.toLowerCase().includes(searchLower) ||
+        (sub.description && sub.description.toLowerCase().includes(searchLower))
+      )
+    );
+  }, [competencias, competenciasSearch]);
+
   const orderedCompetencias = useMemo(() => {
-    if (!hasFullLomloeKeySet) return competencias;
+    const baseCompetencias = filteredCompetencias;
+    if (!hasFullLomloeKeySet) return baseCompetencias;
     const orderIndex = (code: string) => {
       const normalized = normalizeCompetenceCode(code);
       const idx = (LOMLOE_COMPETENCE_CODES as readonly string[]).indexOf(normalized);
       return idx >= 0 ? idx : 999;
     };
-    return [...competencias].sort((a, b) => {
+    return [...baseCompetencias].sort((a, b) => {
       const oa = orderIndex(a.code);
       const ob = orderIndex(b.code);
       if (oa !== ob) return oa - ob;
       return normalizeCompetenceCode(a.code).localeCompare(normalizeCompetenceCode(b.code));
     });
-  }, [competencias, hasFullLomloeKeySet]);
+  }, [filteredCompetencias, hasFullLomloeKeySet]);
 
   const scrollToCompetencia = (competenciaId: string) => {
     const el = compRefs.current.get(competenciaId);
@@ -237,7 +283,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
     const draft = newSubByCompetenciaId[competenciaId] || { code: '', name: '', description: '' };
     const name = (draft.name || '').trim();
     if (!name) {
-      alert('El nombre de la subcompetencia es requerido');
+      alert('El nombre del descriptor operativo (DO) es requerido');
       return;
     }
 
@@ -265,11 +311,127 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
     if (!comp) return;
     const sub = (comp.subCompetencias || []).find(s => s.id === subId);
     if (!sub) return;
-    const ok = confirm(`Eliminar sub-competencia "${sub.code ? sub.code + ': ' : ''}${sub.name}"?`);
+    const ok = confirm(`Eliminar descriptor operativo (DO) "${sub.code ? sub.code + ': ' : ''}${sub.name}"?`);
     if (!ok) return;
     const nextSubs = (comp.subCompetencias || []).filter(s => s.id !== subId);
     updateCompetencia(competenciaId, { subCompetencias: nextSubs });
   };
+
+  // Criteria functions
+  const saveCriterion = async () => {
+    if (!teacher.workspaceId) return;
+    if (!newCriterion.id.trim() || !newCriterion.area.trim() || !newCriterion.text.trim()) {
+      alert('Completa al menos el ID, área y texto del criterio');
+      return;
+    }
+
+    const criterion: Criterion = {
+      id: newCriterion.id.trim(),
+      course: newCriterion.course,
+      area: newCriterion.area.trim(),
+      text: newCriterion.text.trim(),
+      descriptorCodes: newCriterion.descriptorCodes.filter(code => code.trim()),
+    };
+
+    try {
+      await upsertCriterion(teacher.workspaceId, criterion);
+      setNewCriterion({
+        id: '',
+        course: 5,
+        area: '',
+        text: '',
+        descriptorCodes: [],
+      });
+      setEditingCriterionId('');
+    } catch (error) {
+      alert('Error al guardar el criterio');
+    }
+  };
+
+  const deleteCriterionLocal = async (criterionId: string) => {
+    if (!teacher.workspaceId) return;
+    const ok = confirm('¿Eliminar este criterio de evaluación?');
+    if (!ok) return;
+
+    try {
+      await deleteCriterion(teacher.workspaceId, criterionId);
+    } catch (error) {
+      alert('Error al eliminar el criterio');
+    }
+  };
+
+  const startEditingCriterion = (criterion: Criterion) => {
+    setEditingCriterionId(criterion.id);
+    setNewCriterion({
+      id: criterion.id,
+      course: criterion.course,
+      area: criterion.area,
+      text: criterion.text,
+      descriptorCodes: [...criterion.descriptorCodes],
+    });
+  };
+
+  const cancelEditingCriterion = () => {
+    setEditingCriterionId('');
+    setNewCriterion({
+      id: '',
+      course: 5,
+      area: '',
+      text: '',
+      descriptorCodes: [],
+    });
+  };
+
+  const seedCriteriaFromCSVLocal = async () => {
+    if (!teacher.workspaceId) return;
+    setIsSeedingCriteria(true);
+    try {
+      await seedCriteriaFromCSV(teacher.workspaceId);
+      alert('Criterios importados exitosamente desde CSV');
+    } catch (error) {
+      alert('Error al importar criterios desde CSV');
+    } finally {
+      setIsSeedingCriteria(false);
+    }
+  };
+
+  // Group criteria by area
+  const criteriaGrouped = useMemo(() => {
+    const filtered = criteria.filter(criterion => {
+      if (!criteriosSearch) return true;
+      const searchLower = criteriosSearch.toLowerCase();
+      return (
+        criterion.id.toLowerCase().includes(searchLower) ||
+        criterion.text.toLowerCase().includes(searchLower) ||
+        criterion.area.toLowerCase().includes(searchLower) ||
+        criterion.descriptorCodes.some(code => code.toLowerCase().includes(searchLower))
+      );
+    });
+
+    const grouped: Record<string, Criterion[]> = {};
+    for (const criterion of filtered) {
+      let key: string;
+      switch (criteriosGroupBy) {
+        case 'course':
+          key = `${criterion.course}º curso`;
+          break;
+        case 'competencia':
+          // Extract competencia from descriptor codes (first part before dot)
+          const competenciaCode = criterion.descriptorCodes.length > 0 
+            ? criterion.descriptorCodes[0].split('.')[0] 
+            : 'Sin competencia';
+          key = competenciaCode;
+          break;
+        case 'area':
+        default:
+          key = criterion.area || 'Sin área';
+          break;
+      }
+      if (!grouped[key]) grouped[key] = [];
+      grouped[key].push(criterion);
+    }
+    return grouped;
+  }, [criteria, criteriosSearch, criteriosGroupBy]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -282,65 +444,119 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
         </button>
 
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900">Competencias</h1>
-          <p className="text-gray-600 mt-2">Lista editable de competencias y subcompetencias.</p>
+          <h1 className="text-3xl font-bold text-gray-900">Competencias y criterios</h1>
+          <p className="text-gray-600 mt-2">Lista editable de competencias clave y descriptores operativos (DO).</p>
           <p className="text-sm text-gray-500 mt-2">El código funciona como etiqueta (p.ej. CCL).</p>
 
-          {orderedCompetencias.length > 0 ? (
-            <div className="mt-4">
-              <div className="text-xs text-gray-500 mb-2">Ir a competencia</div>
-              <div className="flex flex-wrap gap-2">
-                {orderedCompetencias.map((c) => (
-                  <button
-                    key={c.id}
-                    type="button"
-                    className={editingCompetenciaId === c.id ? 'btn-primary' : 'btn-secondary'}
-                    onClick={() => scrollToCompetencia(c.id)}
-                    title={c.name}
-                  >
-                    {(c.code || '').trim() || '—'}
-                  </button>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          {hasFullLomloeKeySet && (
-            <p className="text-sm text-gray-600 mt-2">
-              En LOMLOE (Galicia), las competencias clave se desarrollan de forma transversal e interrelacionada (sin jerarquía):
-              trabajar una contribuye a las demás. Fuente:{' '}
-              <a className="underline" href={LOMLOE_RELATIONSHIP_SOURCE_URL} target="_blank" rel="noreferrer">
-                DOG – Decreto 155/2022 (Anexo I, Perfil de salida)
-              </a>
-            </p>
-          )}
-
-          {teacher.workspaceId && showSharedNotice && (
-            <div className="card mt-4">
-              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-                <p className="text-sm text-gray-700">
-                  Ahora las competencias se guardan en la nube y se comparten con todo el equipo del centro.
-                </p>
-                <button
-                  className="btn-secondary h-10"
-                  onClick={() => {
-                    try {
-                      window.localStorage.setItem('avaliacion_competencias_firestore_notice_v1', '1');
-                    } catch {
-                      // ignore
-                    }
-                    setShowSharedNotice(false);
-                  }}
-                >
-                  Entendido
-                </button>
-              </div>
-            </div>
-          )}
+          {/* Tabs */}
+          <div className="mt-6 border-b border-gray-200">
+            <nav className="-mb-px flex space-x-8">
+              <button
+                onClick={() => setActiveTab('competencias')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'competencias'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Competencias clave
+              </button>
+              <button
+                onClick={() => setActiveTab('criterios')}
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === 'criterios'
+                    ? 'border-blue-500 text-blue-600'
+                    : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+              >
+                Criterios de evaluación
+              </button>
+            </nav>
+          </div>
         </div>
 
-        <div className="card mb-6">
-          <h2 className="text-lg font-bold text-gray-900 mb-4">Añadir Competencia</h2>
+        <div>
+          {activeTab === 'competencias' && (
+            <>
+              <p className="text-gray-600 mt-2">Lista editable de competencias clave y descriptores operativos (DO).</p>
+
+              {/* Search bar for competencias */}
+              <div className="mt-4">
+                <div className="relative">
+                  <input
+                    type="text"
+                    placeholder="Buscar competencias por código, nombre o descripción..."
+                    value={competenciasSearch}
+                    onChange={(e) => setCompetenciasSearch(e.target.value)}
+                    className="input-field pl-10"
+                  />
+                  <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                    <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                    </svg>
+                  </div>
+                </div>
+                {competenciasSearch && (
+                  <p className="text-xs text-gray-500 mt-1">
+                    {filteredCompetencias.length} competencia{filteredCompetencias.length !== 1 ? 's' : ''} encontrada{filteredCompetencias.length !== 1 ? 's' : ''}
+                  </p>
+                )}
+              </div>
+
+              {orderedCompetencias.length > 0 ? (
+                <div className="mt-4">
+                  <div className="text-xs text-gray-500 mb-2">Ir a competencia</div>
+                  <div className="flex flex-wrap gap-2">
+                    {orderedCompetencias.map((c) => (
+                      <button
+                        key={c.id}
+                        type="button"
+                        className={editingCompetenciaId === c.id ? 'btn-primary' : 'btn-secondary'}
+                        onClick={() => scrollToCompetencia(c.id)}
+                        title={c.name}
+                      >
+                        {(c.code || '').trim() || '—'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+
+              {hasFullLomloeKeySet && (
+                <p className="text-sm text-gray-600 mt-2">
+                  En LOMLOE (Galicia), las competencias clave se desarrollan de forma transversal e interrelacionada (sin jerarquía):
+                  trabajar una contribuye a las demás. Fuente:{' '}
+                  <a className="underline" href={LOMLOE_RELATIONSHIP_SOURCE_URL} target="_blank" rel="noreferrer">
+                    DOG – Decreto 155/2022 (Anexo I, Perfil de salida)
+                  </a>
+                </p>
+              )}
+
+              {teacher.workspaceId && showSharedNotice && (
+                <div className="card mt-4">
+                  <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                    <p className="text-sm text-gray-700">
+                      Ahora las competencias se guardan en la nube y se comparten con todo el equipo del centro.
+                    </p>
+                    <button
+                      className="btn-secondary h-10"
+                      onClick={() => {
+                        try {
+                          window.localStorage.setItem('avaliacion_competencias_firestore_notice_v1', '1');
+                        } catch {
+                          // ignore
+                        }
+                        setShowSharedNotice(false);
+                      }}
+                    >
+                      Entendido
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              <div className="card mb-6">
+                <h2 className="text-lg font-bold text-gray-900 mb-4">Añadir Competencia</h2>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-start">
             <input
               className="input-field h-10 md:w-32 md:justify-self-start px-3 py-2 text-sm font-semibold tracking-wide uppercase"
@@ -406,10 +622,10 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
                 </div>
               </div>
 
-              {/* Read-only subcompetencias */}
+              {/* Read-only descriptores operativos (DO) */}
               {editingCompetenciaId !== comp.id ? (
                 <div className="mt-4">
-                  <div className="text-xs text-gray-500 mb-2">Subcompetencias</div>
+                  <div className="text-xs text-gray-500 mb-2">Descriptores operativos (DO)</div>
                   {(comp.subCompetencias && comp.subCompetencias.length > 0) ? (
                     <div className="flex flex-wrap gap-2">
                       {comp.subCompetencias.map((s) => (
@@ -423,7 +639,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
                       ))}
                     </div>
                   ) : (
-                    <p className="text-sm text-gray-600">No hay subcompetencias todavía.</p>
+                    <p className="text-sm text-gray-600">No hay descriptores operativos todavía.</p>
                   )}
                 </div>
               ) : (
@@ -459,7 +675,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
 
                   <div className="mt-5">
                     <div className="flex items-center justify-between gap-2">
-                      <h3 className="text-sm font-semibold text-gray-900">Subcompetencias</h3>
+                      <h3 className="text-sm font-semibold text-gray-900">Descriptores operativos (DO)</h3>
                     </div>
 
                     {(comp.subCompetencias && comp.subCompetencias.length > 0) ? (
@@ -488,7 +704,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
                                 <button
                                   className="btn-secondary flex items-center justify-center gap-2 h-10 w-full"
                                   onClick={() => deleteSubCompetencia(comp.id, sub.id)}
-                                  title="Eliminar subcompetencia"
+                                  title="Eliminar descriptor operativo (DO)"
                                 >
                                   <Trash2 className="w-5 h-5" />
                                   Eliminar
@@ -509,11 +725,11 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
                         ))}
                       </div>
                     ) : (
-                      <p className="text-sm text-gray-600 mt-2">No hay subcompetencias todavía.</p>
+                      <p className="text-sm text-gray-600 mt-2">No hay descriptores operativos todavía.</p>
                     )}
 
                     <div className="mt-4 border border-gray-200 rounded-lg p-4 bg-gray-50">
-                      <p className="text-sm font-semibold text-gray-900 mb-3">Añadir subcompetencia</p>
+                      <p className="text-sm font-semibold text-gray-900 mb-3">Añadir descriptor operativo (DO)</p>
                       <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-start">
                         <div className="md:col-span-2">
                           <label className="block text-xs font-medium text-gray-700 mb-1">Código</label>
@@ -548,7 +764,7 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
                                 },
                               }))
                             }
-                            placeholder="Nombre de la subcompetencia"
+                            placeholder="Nombre del descriptor operativo"
                           />
                         </div>
                         <div className="md:col-span-4 flex items-end">
@@ -600,6 +816,204 @@ export default function CompetenciasPage({ teacher, onLogout }: CompetenciasPage
             <div className="card">
               <p className="text-gray-600">No hay competencias configuradas.</p>
             </div>
+          )}
+        </div>
+
+            </>
+          )}
+
+          {activeTab === 'criterios' && (
+            <>
+              <p className="text-gray-600 mt-2">Lista editable de criterios de evaluación y sus descriptores operativos asociados.</p>
+
+              {/* Search and group controls for criterios */}
+              <div className="mt-4 space-y-4">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="flex-1">
+                    <div className="relative">
+                      <input
+                        type="text"
+                        placeholder="Buscar criterios por ID, texto, área o descriptores..."
+                        value={criteriosSearch}
+                        onChange={(e) => setCriteriosSearch(e.target.value)}
+                        className="input-field pl-10"
+                      />
+                      <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                        <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="sm:w-48">
+                    <select
+                      value={criteriosGroupBy}
+                      onChange={(e) => setCriteriosGroupBy(e.target.value as 'area' | 'course' | 'competencia')}
+                      className="input-field"
+                    >
+                      <option value="area">Agrupar por área</option>
+                      <option value="course">Agrupar por curso</option>
+                      <option value="competencia">Agrupar por competencia</option>
+                    </select>
+                  </div>
+                </div>
+                {criteriosSearch && (
+                  <p className="text-xs text-gray-500">
+                    {Object.values(criteriaGrouped).flat().length} criterio{Object.values(criteriaGrouped).flat().length !== 1 ? 's' : ''} encontrado{Object.values(criteriaGrouped).flat().length !== 1 ? 's' : ''}
+                  </p>
+                )}
+              </div>
+
+              {/* Import from CSV button */}
+              <div className="mt-4">
+                <button
+                  className="btn-secondary flex items-center gap-2"
+                  onClick={seedCriteriaFromCSVLocal}
+                  disabled={isSeedingCriteria}
+                >
+                  {isSeedingCriteria ? 'Importando…' : 'Importar desde CSV'}
+                </button>
+                <p className="text-xs text-gray-500 mt-1">Importa los criterios del archivo CSV incluido en la aplicación</p>
+              </div>
+
+          {/* Add/Edit Criterion Form */}
+          <div className="mt-6 card">
+            <h3 className="text-lg font-semibold text-gray-900 mb-4">
+              {editingCriterionId ? 'Editar criterio' : 'Nuevo criterio'}
+            </h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">ID</label>
+                <input
+                  className="input-field"
+                  value={newCriterion.id}
+                  onChange={(e) => setNewCriterion(prev => ({ ...prev, id: e.target.value }))}
+                  placeholder="Ej: CN.5.1.1"
+                  disabled={!!editingCriterionId}
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Curso</label>
+                <select
+                  className="input-field"
+                  value={newCriterion.course}
+                  onChange={(e) => setNewCriterion(prev => ({ ...prev, course: Number(e.target.value) as 5 | 6 }))}
+                >
+                  <option value={5}>5º</option>
+                  <option value={6}>6º</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Área</label>
+                <input
+                  className="input-field"
+                  value={newCriterion.area}
+                  onChange={(e) => setNewCriterion(prev => ({ ...prev, area: e.target.value }))}
+                  placeholder="Ej: CN, CCL, STEM"
+                />
+              </div>
+              <div className="flex items-end gap-2">
+                <button
+                  className="btn-primary flex-1"
+                  onClick={saveCriterion}
+                >
+                  {editingCriterionId ? 'Actualizar' : 'Crear'}
+                </button>
+                {editingCriterionId && (
+                  <button
+                    className="btn-secondary"
+                    onClick={cancelEditingCriterion}
+                  >
+                    Cancelar
+                  </button>
+                )}
+              </div>
+            </div>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Texto del criterio</label>
+              <textarea
+                className="input-field"
+                rows={3}
+                value={newCriterion.text}
+                onChange={(e) => setNewCriterion(prev => ({ ...prev, text: e.target.value }))}
+                placeholder="Describe el criterio de evaluación..."
+              />
+            </div>
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-gray-700 mb-1">Descriptores operativos (DO)</label>
+              <input
+                className="input-field"
+                value={newCriterion.descriptorCodes.join(', ')}
+                onChange={(e) => setNewCriterion(prev => ({
+                  ...prev,
+                  descriptorCodes: e.target.value.split(',').map(s => s.trim()).filter(Boolean)
+                }))}
+                placeholder="Ej: STEM2, CCL3, CD1"
+              />
+              <p className="text-xs text-gray-500 mt-1">Separa con comas los códigos de descriptores operativos</p>
+            </div>
+          </div>
+
+          {/* Criteria List */}
+          {Object.keys(criteriaGrouped).length > 0 ? (
+            <div className="mt-6 space-y-6">
+              {Object.entries(criteriaGrouped).map(([group, groupCriteria]) => (
+                <div key={group} className="card">
+                  <h3 className="text-lg font-semibold text-gray-900 mb-4">{group}</h3>
+                  <div className="space-y-3">
+                    {groupCriteria.map((criterion) => (
+                      <div key={criterion.id} className="border border-gray-200 rounded-lg p-4 bg-gray-50">
+                        <div className="flex items-start justify-between">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-2">
+                              <span className="inline-flex items-center rounded-full bg-blue-100 px-2.5 py-0.5 text-xs font-semibold text-blue-700">
+                                {criterion.id}
+                              </span>
+                              <span className="inline-flex items-center rounded-full bg-gray-100 px-2.5 py-0.5 text-xs font-semibold text-gray-700">
+                                {criterion.course}º
+                              </span>
+                            </div>
+                            <p className="text-sm text-gray-900 mb-2">{criterion.text}</p>
+                            {criterion.descriptorCodes.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {criterion.descriptorCodes.map((code: string) => (
+                                  <span key={code} className="inline-flex items-center rounded-full bg-green-100 px-2 py-0.5 text-xs font-semibold text-green-700">
+                                    {code}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-2 ml-4">
+                            <button
+                              className="btn-secondary h-8 px-3"
+                              onClick={() => startEditingCriterion(criterion)}
+                              title="Editar criterio"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              className="btn-secondary h-8 px-3 text-red-600 hover:text-red-700"
+                              onClick={() => deleteCriterionLocal(criterion.id)}
+                              title="Eliminar criterio"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="mt-6 card">
+              <p className="text-gray-600">No hay criterios de evaluación configurados.</p>
+              <p className="text-sm text-gray-500 mt-2">Los criterios se pueden importar desde CSV o crear manualmente aquí.</p>
+            </div>
+          )}
+            </>
           )}
         </div>
       </main>

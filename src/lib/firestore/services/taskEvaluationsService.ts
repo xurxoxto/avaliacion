@@ -11,7 +11,7 @@ import {
   where,
 } from 'firebase/firestore';
 import { db } from '../../../config/firebase';
-import type { GradeKey, TaskCompetencyLink, TaskEvaluation, TaskEvaluationTeacherEntry } from '../../../types';
+import type { GradeKey, TaskCriteriaLink, TaskEvaluation, TaskEvaluationTeacherEntry } from '../../../types';
 import { getTask } from './learningTasksService';
 
 const COLLECTION = 'taskEvaluations';
@@ -28,22 +28,17 @@ export function taskEvaluationDocId(studentId: string, taskId: string) {
   return `${studentId}__${taskId}`;
 }
 
-function normalizeLinks(value: any): TaskCompetencyLink[] {
+function normalizeLinks(value: any): TaskCriteriaLink[] {
   if (!Array.isArray(value)) return [];
   return value
     .map((x: any) => {
-      const competenciaId = String(x?.competenciaId ?? '').trim();
-      if (!competenciaId) return null;
-      const subCompetenciaId = String(x?.subCompetenciaId ?? '').trim();
+      const criteriaId = String(x?.criteriaId ?? '').trim();
+      if (!criteriaId) return null;
       const weightNum = typeof x?.weight === 'number' ? x.weight : Number(x?.weight ?? 0);
       const weight = Number.isFinite(weightNum) ? Math.max(0, Math.min(100, weightNum)) : 0;
-      // IMPORTANT: Firestore rejects `undefined` values anywhere in the payload.
-      // Only include optional fields when they have a value.
-      const link: any = { competenciaId, weight };
-      if (subCompetenciaId) link.subCompetenciaId = subCompetenciaId;
-      return link as TaskCompetencyLink;
+      return { criteriaId, weight } as TaskCriteriaLink;
     })
-    .filter(Boolean) as TaskCompetencyLink[];
+    .filter(Boolean) as TaskCriteriaLink[];
 }
 
 function normalizeTeacherEntries(value: any): Record<string, TaskEvaluationTeacherEntry> | undefined {
@@ -168,7 +163,7 @@ export async function upsertTaskEvaluation(params: {
   teacherName?: string;
   teacherEmail?: string;
   /** Optional snapshot of task.links to avoid an extra read per save (critical for <20s classroom flow). */
-  linksSnapshot?: TaskCompetencyLink[];
+  linksSnapshot?: TaskCriteriaLink[];
 }) {
   const {
     workspaceId,
@@ -186,7 +181,7 @@ export async function upsertTaskEvaluation(params: {
 
   // Business rule: copy competency links from the task at write time.
   // For fast classroom UX, allow passing a snapshot from the UI to avoid an extra read.
-  let links: TaskCompetencyLink[] = [];
+  let links: TaskCriteriaLink[] = [];
   if (Array.isArray(linksSnapshot)) {
     links = normalizeLinks(linksSnapshot);
   } else {

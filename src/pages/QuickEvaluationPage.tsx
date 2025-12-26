@@ -1,15 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, NotebookPen, X } from 'lucide-react';
-import type { Competencia, GradeKey, LearningSituation, LearningTask, TaskEvaluation, Student, Teacher } from '../types';
+import type { GradeKey, LearningSituation, LearningTask, TaskEvaluation, Student, Teacher } from '../types';
 import Header from '../components/Header';
 import Breadcrumbs from '../components/Breadcrumbs';
 import { listenStudents } from '../utils/firestore/students';
-import { listenCompetencias } from '../utils/firestore/competencias';
 import { getLearningSituationWithLegacyFallback } from '../lib/firestore/services/learningSituationsService';
 import { listenTasks } from '../lib/firestore/services/learningTasksService';
 import { listenTaskEvaluationsForTask, upsertTaskEvaluation } from '../lib/firestore/services/taskEvaluationsService';
 import { GRADE_COLOR_CLASS, GRADE_KEYS, GRADE_LABEL_ES } from '../utils/triangulation/gradeScale';
+import { getCriteriosPuenteTerminal } from '../data/criteriosPuenteTerminal';
 
 interface QuickEvaluationPageProps {
   teacher: Teacher;
@@ -36,7 +36,7 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
 
   const [situation, setSituation] = useState<LearningSituation | null>(null);
   const [students, setStudents] = useState<Student[]>([]);
-  const [competencias, setCompetencias] = useState<Competencia[]>([]);
+  const criterios = useMemo(() => getCriteriosPuenteTerminal(), []);
   const [tasks, setTasks] = useState<LearningTask[]>([]);
   const [selectedTaskId, setSelectedTaskId] = useState<string>('');
   const [evaluations, setEvaluations] = useState<TaskEvaluation[]>([]);
@@ -73,10 +73,8 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
   useEffect(() => {
     if (!workspaceId) return;
     const unsubStudents = listenStudents(workspaceId, setStudents);
-    const unsubComps = listenCompetencias(workspaceId, setCompetencias);
     return () => {
       unsubStudents();
-      unsubComps();
     };
   }, [workspaceId]);
 
@@ -135,12 +133,6 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
     const obs = typeof entry?.observation === 'string' ? entry.observation : undefined;
     return obs ?? evaluation?.observation;
   };
-
-  const competenciasById = useMemo(() => {
-    const map = new Map<string, Competencia>();
-    for (const c of competencias) map.set(c.id, c);
-    return map;
-  }, [competencias]);
 
   const assignedStudentSet = useMemo(() => {
     const t = tasks.find((x) => x.id === selectedTaskId);
@@ -261,16 +253,16 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
     }, 2200);
   };
 
-  const competencyLabel = (id: string) => {
-    const c = competenciasById.get(id);
-    if (!c) return id;
-    return `${c.code}`;
+  const criteriaLabel = (id: string) => {
+    const crit = criterios.find(c => c.id === id);
+    if (!crit) return id;
+    return `${crit.id}`;
   };
 
-  const relatedCompetencySummary = (ids: string[]) => {
+  const relatedCriteriaSummary = (ids: string[]) => {
     const uniq = Array.from(new Set(ids.filter(Boolean)));
     if (uniq.length === 0) return '';
-    return uniq.map(competencyLabel).join(', ');
+    return uniq.map(criteriaLabel).join(', ');
   };
 
   const handleSaveRating = async (studentId: string, rating: GradeKey) => {
@@ -290,9 +282,9 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
         teacherName: teacher.name,
         teacherEmail: teacher.email,
       });
-      const compIds = Array.from(new Set((res.links || []).map((l) => l.competenciaId).filter(Boolean)));
-      const comps = relatedCompetencySummary(compIds);
-      showToast(comps ? `Evaluación guardada. Alimenta: ${comps}` : 'Evaluación guardada.');
+      const critIds = Array.from(new Set((res.links || []).map((l) => (l as any).criteriaId).filter(Boolean)));
+      const crits = relatedCriteriaSummary(critIds);
+      showToast(crits ? `Evaluación guardada. Alimenta: ${crits}` : 'Evaluación guardada.');
     } catch (err: any) {
       console.error('upsertTaskEvaluation failed', err);
       const code = typeof err?.code === 'string' ? err.code : '';
@@ -340,9 +332,9 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
         teacherName: teacher.name,
         teacherEmail: teacher.email,
       });
-      const compIds = Array.from(new Set((res.links || []).map((l) => l.competenciaId).filter(Boolean)));
-      const comps = relatedCompetencySummary(compIds);
-      showToast(comps ? `Observación guardada. Alimenta: ${comps}` : 'Observación guardada.');
+      const critIds = Array.from(new Set((res.links || []).map((l) => (l as any).criteriaId).filter(Boolean)));
+      const crits = relatedCriteriaSummary(critIds);
+      showToast(crits ? `Observación guardada. Alimenta: ${crits}` : 'Observación guardada.');
       setObsOpen(false);
       setObsStudentId('');
       setObsDraft('');
@@ -415,7 +407,7 @@ export default function QuickEvaluationPage({ teacher, onLogout }: QuickEvaluati
               </select>
               {selectedTask?.links?.length ? (
                 <p className="text-xs text-gray-600 mt-2">
-                  Alimenta: {relatedCompetencySummary(Array.from(new Set(selectedTask.links.map((l) => l.competenciaId))))}
+                  Alimenta: {relatedCriteriaSummary(Array.from(new Set(selectedTask.links.map((l) => (l as any).criteriaId))))}
                 </p>
               ) : (
                 <p className="text-xs text-gray-600 mt-2">Define vínculos de competencias en la tarea para alimentar el cálculo.</p>

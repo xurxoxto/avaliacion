@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowLeft, Plus, X, Trash2 } from 'lucide-react';
-import type { AudienceLevel, Classroom, Competencia, LearningSituation, LearningTask, LearningSituationType, Student, SubCompetencia, TaskCompetencyLink, Teacher } from '../types';
+import type { Classroom, LearningSituation, LearningTask, LearningSituationType, Student, TaskCriteriaLink, Teacher } from '../types';
+import { getCriteriosPuenteTerminal } from '../data/criteriosPuenteTerminal';
 import Header from '../components/Header';
 import Breadcrumbs from '../components/Breadcrumbs';
-import { listenCompetencias } from '../utils/firestore/competencias';
 import { listenClassrooms } from '../utils/firestore/classrooms';
 import { listenStudents } from '../utils/firestore/students';
 import {
@@ -37,7 +37,6 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
 
   const [situation, setSituation] = useState<LearningSituation | null>(null);
   const [tasks, setTasks] = useState<LearningTask[]>([]);
-  const [competencias, setCompetencias] = useState<Competencia[]>([]);
   const [classrooms, setClassrooms] = useState<Classroom[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
 
@@ -45,31 +44,38 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
   const [editingTaskId, setEditingTaskId] = useState('');
   const [taskTitle, setTaskTitle] = useState('');
   const [taskDescription, setTaskDescription] = useState('');
-  const [taskAudienceLevels, setTaskAudienceLevels] = useState<AudienceLevel[]>([5, 6]);
-  const [achievementText5, setAchievementText5] = useState('');
-  const [achievementText6, setAchievementText6] = useState('');
   const [assignedStudentIds, setAssignedStudentIds] = useState<string[]>([]);
   const [assignmentSearch, setAssignmentSearch] = useState('');
   const [linkDrafts, setLinkDrafts] = useState<
-    Array<{ competenciaId: string; weightAll: number; subWeights: Record<string, number> }>
+    Array<{ criteriaId: string; weight: number }>
   >([]);
-  const [competenciaSearch, setCompetenciaSearch] = useState('');
+  const [criterioSearchForTask, setCriterioSearchForTask] = useState('');
+  const [selectedCriterioIdsForTask, setSelectedCriterioIdsForTask] = useState<Set<string>>(new Set());
   const [weightDraftByKey, setWeightDraftByKey] = useState<Record<string, string>>({});
-  const [subPickerOpenByCompId, setSubPickerOpenByCompId] = useState<Record<string, boolean>>({});
 
-  const weightKey = (competenciaId: string, subCompetenciaId?: string) => {
-    const c = String(competenciaId || '').trim();
-    const s = String(subCompetenciaId || '').trim();
-    return `${c}__${s || 'ALL'}`;
-  };
+  // --- Asociación de criterios de evaluación (criterios puente/terminal) ---
+  const [criterioSearch, setCriterioSearch] = useState('');
+  const [selectedCriterioIds, setSelectedCriterioIds] = useState<string[]>([]);
 
   const clampPct = (n: number) => Math.max(0, Math.min(100, Math.round(n)));
 
-  const briefSubNote = (s: SubCompetencia) => {
-    const raw = String(s.description || s.name || '').trim();
-    if (!raw) return '';
-    const oneLine = raw.replace(/\s+/g, ' ');
-    return oneLine.length > 140 ? oneLine.slice(0, 140).trimEnd() + '…' : oneLine;
+  const criterios = getCriteriosPuenteTerminal(criterioSearch);
+
+  // Criterios for task modal (unfiltered)
+  const allCriterios = useMemo(() => getCriteriosPuenteTerminal(), []);
+
+  // Guardar criterios asociados a la situación (en el objeto situation, campo 'criterioIds')
+  const saveCriteriosAsociados = async (ids: string[]) => {
+    if (!workspaceId || !learningSituationId || !situation) return;
+    try {
+      await upsertLearningSituation(workspaceId, {
+        ...situation,
+        criterioIds: ids,
+      });
+      setSituation((prev) => prev ? { ...prev, criterioIds: ids } : prev);
+    } catch {
+      alert('No se pudo guardar la asociación de criterios.');
+    }
   };
 
   useEffect(() => {
@@ -92,22 +98,21 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
   useEffect(() => {
     if (!workspaceId || !learningSituationId) return;
     const unsubTasks = listenTasks(workspaceId, learningSituationId, setTasks);
-    const unsubComps = listenCompetencias(workspaceId, setCompetencias);
     const unsubClassrooms = listenClassrooms(workspaceId, setClassrooms);
     const unsubStudents = listenStudents(workspaceId, setStudents);
     return () => {
       unsubTasks();
-      unsubComps();
       unsubClassrooms();
       unsubStudents();
     };
   }, [workspaceId, learningSituationId]);
 
-  const competenciasById = useMemo(() => {
-    const map = new Map<string, Competencia>();
-    for (const c of competencias) map.set(c.id, c);
-    return map;
-  }, [competencias]);
+  // Inicializar selección desde la situación (si ya tiene criterios asociados)
+  useEffect(() => {
+    if (situation && Array.isArray((situation as any).criterioIds)) {
+      setSelectedCriterioIds((situation as any).criterioIds);
+    }
+  }, [situation]);
 
   const breadcrumbItems = useMemo(() => {
     return [
@@ -120,15 +125,12 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
     setEditingTaskId('');
     setTaskTitle('');
     setTaskDescription('');
-    setTaskAudienceLevels([5, 6]);
-    setAchievementText5('');
-    setAchievementText6('');
     setAssignedStudentIds([]);
     setAssignmentSearch('');
     setLinkDrafts([]);
-    setCompetenciaSearch('');
+    setCriterioSearchForTask('');
+    setSelectedCriterioIdsForTask(new Set());
     setWeightDraftByKey({});
-    setSubPickerOpenByCompId({});
     setTaskModalOpen(true);
   };
 
@@ -136,183 +138,74 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
     setEditingTaskId(t.id);
     setTaskTitle(t.title || '');
     setTaskDescription(t.description || '');
-    const rawAudience = Array.isArray((t as any).audienceLevels) ? (t as any).audienceLevels : [];
-    const levels = rawAudience
-      .map((x: any) => Number(x))
-      .filter((n: any) => n === 5 || n === 6) as AudienceLevel[];
-    const uniq = Array.from(new Set(levels));
-    setTaskAudienceLevels(uniq.length === 1 ? uniq : [5, 6]);
-    const ach = (t as any).achievementTextByLevel;
-    setAchievementText5(typeof ach?.[5] === 'string' ? String(ach[5]) : '');
-    setAchievementText6(typeof ach?.[6] === 'string' ? String(ach[6]) : '');
     setAssignedStudentIds(Array.isArray((t as any).assignedStudentIds) ? (t as any).assignedStudentIds : []);
     setAssignmentSearch('');
     const raw = Array.isArray(t.links) ? t.links : [];
-    const byComp = new Map<
-      string,
-      { weightAll: number; subWeights: Record<string, number>; hasAll: boolean; hasAnySub: boolean }
-    >();
+    const linkDraftsFromTask: Array<{ criteriaId: string; weight: number }> = [];
+    const selectedIds = new Set<string>();
     for (const l of raw) {
-      const compId = String((l as any)?.competenciaId ?? '').trim();
-      if (!compId) continue;
-      const subId = String((l as any)?.subCompetenciaId ?? '').trim();
+      const criteriaId = String((l as any)?.criteriaId ?? '').trim();
+      if (!criteriaId) continue;
       const w = typeof (l as any)?.weight === 'number' ? (l as any).weight : Number((l as any)?.weight ?? 0);
-      const weight = Number.isFinite(w) ? Math.max(0, Math.min(100, w)) : 0;
-      const entry =
-        byComp.get(compId) || { weightAll: 0, subWeights: {} as Record<string, number>, hasAll: false, hasAnySub: false };
-      if (subId) {
-        entry.hasAnySub = true;
-        entry.subWeights[subId] = clampPct((entry.subWeights[subId] ?? 0) + weight);
-      } else {
-        entry.hasAll = true;
-        entry.weightAll = clampPct(entry.weightAll + weight);
-      }
-      byComp.set(compId, entry);
+      const weight = Number.isFinite(w) ? clampPct(w) : 0;
+      linkDraftsFromTask.push({ criteriaId, weight });
+      selectedIds.add(criteriaId);
     }
-
-    const nextLinkDrafts = Array.from(byComp.entries()).map(([competenciaId, v]) => {
-      // If there are subcompetency links, treat it as per-sub mode.
-      const subWeights = v.hasAnySub ? v.subWeights : {};
-      const weightAll = v.hasAnySub ? 0 : v.weightAll;
-      return { competenciaId, weightAll, subWeights };
-    });
-
-    setLinkDrafts(nextLinkDrafts);
+    setLinkDrafts(linkDraftsFromTask);
+    setSelectedCriterioIdsForTask(selectedIds);
     const weightDrafts: Record<string, string> = {};
-    for (const l of nextLinkDrafts) {
-      if (Object.keys(l.subWeights || {}).length > 0) {
-        for (const [subId, w] of Object.entries(l.subWeights)) {
-          const ww = typeof w === 'number' && Number.isFinite(w) ? w : 0;
-          weightDrafts[weightKey(l.competenciaId, subId)] = ww === 0 ? '' : String(Math.round(ww));
-        }
-      } else {
-        const w = typeof l.weightAll === 'number' && Number.isFinite(l.weightAll) ? l.weightAll : 0;
-        weightDrafts[weightKey(l.competenciaId)] = w === 0 ? '' : String(Math.round(w));
-      }
+    for (const l of linkDraftsFromTask) {
+      weightDrafts[l.criteriaId] = l.weight === 0 ? '' : String(Math.round(l.weight));
     }
     setWeightDraftByKey(weightDrafts);
-    setSubPickerOpenByCompId({});
-    setCompetenciaSearch('');
+    setCriterioSearchForTask('');
     setTaskModalOpen(true);
   };
 
-  const upsertCompetenciaDraft = (
-    competenciaId: string,
-    patch: Partial<{ weightAll: number; subWeights: Record<string, number> }>
-  ) => {
-    const compId = String(competenciaId || '').trim();
-    if (!compId) return;
+  const upsertCriterioDraft = (criteriaId: string, weight: number) => {
+    const critId = String(criteriaId || '').trim();
+    if (!critId) return;
 
     setLinkDrafts((prev) => {
-      const idx = prev.findIndex((x) => x.competenciaId === compId);
+      const idx = prev.findIndex((x) => x.criteriaId === critId);
       if (idx === -1) {
-        return [
-          ...prev,
-          {
-            competenciaId: compId,
-            weightAll: typeof patch.weightAll === 'number' ? patch.weightAll : 0,
-            subWeights: patch.subWeights && typeof patch.subWeights === 'object' ? patch.subWeights : {},
-          },
-        ];
+        return [...prev, { criteriaId: critId, weight }];
       }
-      return prev.map((x, i) => {
-        if (i !== idx) return x;
-        return {
-          ...x,
-          ...(typeof patch.weightAll === 'number' ? { weightAll: patch.weightAll } : null),
-          ...(patch.subWeights && typeof patch.subWeights === 'object' ? { subWeights: patch.subWeights } : null),
-        };
-      });
+      return prev.map((x, i) => i === idx ? { ...x, weight } : x);
     });
 
-    // Ensure a draft exists (at least for ALL).
-    setWeightDraftByKey((prev) => (Object.prototype.hasOwnProperty.call(prev, weightKey(compId)) ? prev : { ...prev, [weightKey(compId)]: '' }));
+    setWeightDraftByKey((prev) => ({ ...prev, [critId]: weight === 0 ? '' : String(Math.round(weight)) }));
   };
 
-  const upsertSubWeight = (competenciaId: string, subCompetenciaId: string, weight: number) => {
-    const compId = String(competenciaId || '').trim();
-    const subId = String(subCompetenciaId || '').trim();
-    if (!compId || !subId) return;
-    setLinkDrafts((prev) => {
-      const idx = prev.findIndex((x) => x.competenciaId === compId);
-      const current = idx === -1 ? { competenciaId: compId, weightAll: 0, subWeights: {} as Record<string, number> } : prev[idx];
-      const nextSubWeights = { ...(current.subWeights || {}) };
-      nextSubWeights[subId] = clampPct(weight);
-      const nextItem = { ...current, weightAll: 0, subWeights: nextSubWeights };
-      if (idx === -1) return [...prev, nextItem];
-      return prev.map((x, i) => (i === idx ? nextItem : x));
+  const removeCriterio = (criteriaId: string) => {
+    const critId = String(criteriaId || '').trim();
+    setLinkDrafts((prev) => prev.filter((x) => x.criteriaId !== critId));
+    setSelectedCriterioIdsForTask((prev) => {
+      const newSet = new Set(prev);
+      newSet.delete(critId);
+      return newSet;
     });
-  };
-
-  const toggleSub = (competenciaId: string, subCompetenciaId: string) => {
-    const compId = String(competenciaId || '').trim();
-    const subId = String(subCompetenciaId || '').trim();
-    if (!compId || !subId) return;
-    setLinkDrafts((prev) => {
-      const idx = prev.findIndex((x) => x.competenciaId === compId);
-      const current = idx === -1 ? { competenciaId: compId, weightAll: 0, subWeights: {} as Record<string, number> } : prev[idx];
-      const nextSubWeights = { ...(current.subWeights || {}) };
-      if (Object.prototype.hasOwnProperty.call(nextSubWeights, subId)) delete nextSubWeights[subId];
-      else nextSubWeights[subId] = 0;
-      const nextItem = {
-        ...current,
-        // If any sub is selected, switch to per-sub mode.
-        weightAll: Object.keys(nextSubWeights).length > 0 ? 0 : current.weightAll,
-        subWeights: nextSubWeights,
-      };
-      if (idx === -1) return [...prev, nextItem];
-      return prev.map((x, i) => (i === idx ? nextItem : x));
-    });
-    const k = weightKey(compId, subId);
-    setWeightDraftByKey((prev) => (Object.prototype.hasOwnProperty.call(prev, k) ? prev : { ...prev, [k]: '' }));
-  };
-
-  const clearSubs = (competenciaId: string) => {
-    const compId = String(competenciaId || '').trim();
-    if (!compId) return;
-    setLinkDrafts((prev) => prev.map((x) => (x.competenciaId === compId ? { ...x, subWeights: {} } : x)));
-  };
-
-  const removeCompetencia = (competenciaId: string) => {
-    const compId = String(competenciaId || '').trim();
-    if (!compId) return;
-    setLinkDrafts((prev) => prev.filter((x) => x.competenciaId !== compId));
     setWeightDraftByKey((prev) => {
-      const next = { ...prev };
-      // Remove ALL + any sub keys
-      for (const k of Object.keys(next)) {
-        if (k.startsWith(`${compId}__`)) delete next[k];
-      }
-      return next;
-    });
-    setSubPickerOpenByCompId((prev) => {
-      const next = { ...prev };
-      delete next[compId];
-      return next;
+      const newObj = { ...prev };
+      delete newObj[critId];
+      return newObj;
     });
   };
 
   const totalWeight = useMemo(() => {
-    return linkDrafts.reduce((acc, l) => {
-      const sub = l.subWeights || {};
-      const subSum = Object.values(sub).reduce((a, v) => a + (Number(v) || 0), 0);
-      if (Object.keys(sub).length > 0) return acc + subSum;
-      return acc + (Number(l.weightAll) || 0);
-    }, 0);
+    return linkDrafts.reduce((acc, l) => acc + (Number(l.weight) || 0), 0);
   }, [linkDrafts]);
 
-  const selectedCompetenciaIds = useMemo(() => {
-    return new Set(linkDrafts.map((l) => l.competenciaId).filter(Boolean));
-  }, [linkDrafts]);
-
-  const filteredCompetencias = useMemo(() => {
-    const q = (competenciaSearch || '').trim().toLowerCase();
-    if (!q) return competencias;
-    return competencias.filter((c) => {
-      const hay = `${c.code} ${c.name} ${c.description || ''}`.toLowerCase();
+  const filteredCriterios = useMemo(() => {
+    // Only show criteria that are associated with the learning situation
+    const situationCriteria = allCriterios.filter(c => selectedCriterioIds.includes(c.id));
+    const q = (criterioSearchForTask || '').trim().toLowerCase();
+    if (!q) return situationCriteria;
+    return situationCriteria.filter((c) => {
+      const hay = `${c.id} ${c.criterio} ${c.area}`.toLowerCase();
       return hay.includes(q);
     });
-  }, [competencias, competenciaSearch]);
+  }, [allCriterios, criterioSearchForTask, selectedCriterioIds]);
 
   const eligibleStudents = useMemo(() => {
     const allowed = new Set((teacher.classroomIds || []).filter(Boolean));
@@ -347,32 +240,12 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
       return;
     }
 
-    const audience = Array.from(new Set((taskAudienceLevels || []).filter((x) => x === 5 || x === 6)));
-    const effectiveAudience: AudienceLevel[] = audience.length === 1 ? (audience as AudienceLevel[]) : [5, 6];
-
-    const t5 = String(achievementText5 || '').trim();
-    const t6 = String(achievementText6 || '').trim();
-    const achievementTextByLevel: Partial<Record<AudienceLevel, string>> = {};
-    if (t5) achievementTextByLevel[5] = t5;
-    if (t6) achievementTextByLevel[6] = t6;
-
-    const normalizedLinks: TaskCompetencyLink[] = [];
+    const normalizedLinks: TaskCriteriaLink[] = [];
     for (const d of linkDrafts) {
-      const competenciaId = String(d.competenciaId || '').trim();
-      if (!competenciaId) continue;
-
-      const sub = d.subWeights && typeof d.subWeights === 'object' ? d.subWeights : {};
-      const subIds = Object.keys(sub).map((x) => String(x || '').trim()).filter(Boolean);
-      if (subIds.length === 0) {
-        const w = typeof d.weightAll === 'number' ? d.weightAll : Number(d.weightAll || 0);
-        const weightAll = Number.isFinite(w) ? clampPct(w) : 0;
-        normalizedLinks.push({ competenciaId, weight: weightAll });
-      } else {
-        for (const subId of subIds) {
-          const w = typeof sub[subId] === 'number' ? sub[subId] : Number(sub[subId] || 0);
-          normalizedLinks.push({ competenciaId, subCompetenciaId: subId, weight: Number.isFinite(w) ? clampPct(w) : 0 });
-        }
-      }
+      const criteriaId = String(d.criteriaId || '').trim();
+      if (!criteriaId) continue;
+      const w = typeof d.weight === 'number' ? d.weight : Number(d.weight || 0);
+      normalizedLinks.push({ criteriaId, weight: Number.isFinite(w) ? clampPct(w) : 0 });
     }
 
     const id = editingTaskId || newId('task');
@@ -383,8 +256,6 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
         title,
         description: taskDescription.trim(),
         links: normalizedLinks,
-        audienceLevels: effectiveAudience.length === 2 ? undefined : effectiveAudience,
-        achievementTextByLevel: Object.keys(achievementTextByLevel).length > 0 ? achievementTextByLevel : undefined,
         assignedStudentIds,
       });
       setTaskModalOpen(false);
@@ -437,7 +308,7 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
             </button>
             <div className="min-w-0">
               <h1 className="text-2xl sm:text-3xl font-bold text-gray-900 truncate">{situation?.title || 'Situación'}</h1>
-              <p className="text-gray-600 mt-1">Define tareas y pesos hacia competencias/subcompetencias.</p>
+              <p className="text-gray-600 mt-1">Define tareas y pesos hacia competencias y descriptores operativos (DO).</p>
             </div>
           </div>
 
@@ -482,6 +353,77 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
         ) : (
           <>
             <div className="card mb-6">
+              <div className="mb-6">
+                <h2 className="text-lg font-bold text-gray-900 mb-2">Criterios de evaluación asociados</h2>
+                <div className="flex flex-col md:flex-row md:items-end gap-2 mb-2">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-gray-700 mb-1">Buscar criterio</label>
+                    <input
+                      className="input-field"
+                      value={criterioSearch}
+                      onChange={e => setCriterioSearch(e.target.value)}
+                      placeholder="Palabra clave, código, área…"
+                    />
+                  </div>
+                  <button
+                    className="btn-secondary h-10"
+                    onClick={() => setCriterioSearch('')}
+                    type="button"
+                  >
+                    Limpiar
+                  </button>
+                </div>
+                <div className="max-h-64 overflow-y-auto border border-gray-100 rounded-lg p-2 bg-white">
+                  {criterios.length === 0 ? (
+                    <p className="text-sm text-gray-600">No hay criterios que coincidan.</p>
+                  ) : (
+                    <table className="min-w-full text-xs">
+                      <thead>
+                        <tr className="text-gray-500">
+                          <th className="text-left font-semibold">Curso</th>
+                          <th className="text-left font-semibold">Área</th>
+                          <th className="text-left font-semibold">Código</th>
+                          <th className="text-left font-semibold">Criterio</th>
+                          <th className="text-left font-semibold">DO</th>
+                          <th className="text-left font-semibold">Tipo</th>
+                          <th></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {criterios.map(c => {
+                          const checked = selectedCriterioIds.includes(c.id);
+                          return (
+                            <tr key={c.id} className={checked ? 'bg-blue-50' : ''}>
+                              <td>{c.cursos.join(', ')}</td>
+                              <td>{c.area}</td>
+                              <td>{c.id}</td>
+                              <td>{c.criterio}</td>
+                              <td>{c.descriptores.join(', ')}</td>
+                              <td>{c.tipo === 'puente' ? 'Puente' : 'Terminal'}</td>
+                              <td>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  onChange={() => {
+                                    let next = checked
+                                      ? selectedCriterioIds.filter(id => id !== c.id)
+                                      : [...selectedCriterioIds, c.id];
+                                    setSelectedCriterioIds(next);
+                                    saveCriteriosAsociados(next);
+                                  }}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <p className="text-xs text-gray-600 mt-2">
+                  <b>Puente</b>: criterio presente en 5º y 6º (el dato de 6º sobrescribe el de 5º). <b>Terminal</b>: criterio exclusivo de un curso.
+                </p>
+              </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-gray-700 mb-2">Título</label>
@@ -537,7 +479,7 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
               <div className="flex items-center justify-between">
                 <div>
                   <h2 className="text-lg font-bold text-gray-900">Tareas</h2>
-                  <p className="text-sm text-gray-600">Cada tarea aporta a competencias/subcompetencias con un porcentaje manual.</p>
+                  <p className="text-sm text-gray-600">Cada tarea aporta a competencias y descriptores operativos (DO) con un porcentaje manual.</p>
                 </div>
               </div>
 
@@ -585,12 +527,10 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
                           <p className="font-semibold">Ponderación</p>
                           <ul className="mt-1 space-y-1">
                             {t.links.map((l, idx) => {
-                              const c = competenciasById.get(l.competenciaId);
-                              const sub = c?.subCompetencias?.find((s) => s.id === l.subCompetenciaId);
+                              const crit = criterios.find(c => c.id === (l as any).criteriaId);
                               return (
                                 <li key={idx}>
-                                  {c ? `${c.code}` : l.competenciaId}
-                                  {sub ? ` · ${sub.code ? sub.code + ': ' : ''}${sub.name}` : ''}
+                                  {crit ? `${crit.id}: ${crit.criterio}` : (l as any).criteriaId}
                                   {` — ${Number(l.weight || 0).toFixed(0)}%`}
                                 </li>
                               );
@@ -598,7 +538,7 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
                           </ul>
                         </div>
                       ) : (
-                        <p className="text-xs text-gray-600 mt-3">Sin competencias vinculadas todavía.</p>
+                        <p className="text-xs text-gray-600 mt-3">Sin criterios vinculados todavía.</p>
                       )}
                     </div>
                   ))}
@@ -633,62 +573,7 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
               </div>
 
               <div className="border border-gray-200 rounded-lg p-3">
-                <p className="text-sm font-semibold text-gray-900">Audiencia (internivel)</p>
-                <p className="text-xs text-gray-600 mt-1">Define si la tarea es común (5º+6º) o específica por nivel.</p>
-
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    className={taskAudienceLevels.length === 2 ? 'btn-primary' : 'btn-secondary'}
-                    onClick={() => setTaskAudienceLevels([5, 6])}
-                    title="Aplicar a 5º y 6º"
-                  >
-                    Ambos
-                  </button>
-                  <button
-                    type="button"
-                    className={taskAudienceLevels.length === 1 && taskAudienceLevels[0] === 5 ? 'btn-primary' : 'btn-secondary'}
-                    onClick={() => setTaskAudienceLevels([5])}
-                    title="Solo 5º"
-                  >
-                    5º
-                  </button>
-                  <button
-                    type="button"
-                    className={taskAudienceLevels.length === 1 && taskAudienceLevels[0] === 6 ? 'btn-primary' : 'btn-secondary'}
-                    onClick={() => setTaskAudienceLevels([6])}
-                    title="Solo 6º"
-                  >
-                    6º
-                  </button>
-                </div>
-
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Texto de logro (5º) (opcional)</label>
-                    <textarea
-                      className="input-field"
-                      rows={2}
-                      value={achievementText5}
-                      onChange={(e) => setAchievementText5(e.target.value)}
-                      placeholder="Qué se espera observar en 5º…"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-gray-700 mb-1">Texto de logro (6º) (opcional)</label>
-                    <textarea
-                      className="input-field"
-                      rows={2}
-                      value={achievementText6}
-                      onChange={(e) => setAchievementText6(e.target.value)}
-                      placeholder="Qué se espera observar en 6º…"
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="border border-gray-200 rounded-lg p-3">
-                <p className="text-sm font-semibold text-gray-900">Asignación (opcional)</p>
+                <p className="text-sm font-semibold text-gray-900">Asignación</p>
                 <p className="text-xs text-gray-600 mt-1">
                   Si no seleccionas a nadie, la tarea cuenta para todos los estudiantes disponibles.
                 </p>
@@ -810,238 +695,104 @@ export default function LearningSituationDetailPage({ teacher, onLogout }: Learn
               <div className="border border-gray-200 rounded-lg p-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-semibold text-gray-900">Competencias/subcompetencias y pesos</p>
-                    <p className="text-xs text-gray-600">Selecciona competencias como etiquetas y asigna un % manual a cada una.</p>
+                    <p className="text-sm font-semibold text-gray-900">Criterios de evaluación y pesos</p>
+                    <p className="text-xs text-gray-600">Selecciona criterios asociados a esta situación y asigna un % a cada uno.</p>
                   </div>
                 </div>
 
                 <div className="mt-3">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">Buscar competencia</label>
+                  <label className="block text-xs font-medium text-gray-700 mb-1">Buscar criterio</label>
                   <input
                     className="input-field"
-                    value={competenciaSearch}
-                    onChange={(e) => setCompetenciaSearch(e.target.value)}
-                    placeholder="Escribe código o nombre…"
+                    value={criterioSearchForTask}
+                    onChange={(e) => setCriterioSearchForTask(e.target.value)}
+                    placeholder="Escribe ID o descripción…"
                   />
 
                   <div className="mt-2 flex flex-wrap gap-2">
-                    {filteredCompetencias.slice(0, 24).map((c) => {
-                      const selected = selectedCompetenciaIds.has(c.id);
+                    {filteredCriterios.slice(0, 24).map((c) => {
+                      const selected = selectedCriterioIdsForTask.has(c.id);
                       return (
                         <button
                           key={c.id}
                           type="button"
                           className={selected ? 'btn-primary' : 'btn-secondary'}
                           onClick={() => {
-                            if (selected) removeCompetencia(c.id);
-                            else upsertCompetenciaDraft(c.id, { weightAll: 0, subWeights: {} });
+                            if (selected) removeCriterio(c.id);
+                            else upsertCriterioDraft(c.id, 0);
                           }}
-                          title={c.name}
+                          title={c.criterio}
                         >
-                          {c.code}
+                          {c.id}
                         </button>
                       );
                     })}
                   </div>
 
+                  {filteredCriterios.length === 0 ? (
+                    <p className="text-sm text-amber-600 mt-3">
+                      No hay criterios asociados a esta situación. Primero asocia criterios a la situación desde la sección superior.
+                    </p>
+                  ) : null}
+
                   {linkDrafts.length === 0 ? (
-                    <p className="text-sm text-gray-600 mt-3">Selecciona una o más competencias.</p>
+                    <p className="text-sm text-gray-600 mt-3">Selecciona uno o más criterios.</p>
                   ) : (
                     <div className="mt-4 space-y-3">
                       {linkDrafts.map((l) => {
-                        const c = competenciasById.get(l.competenciaId);
-                        const subs = c?.subCompetencias || [];
-                        const subPickerOpen = Boolean(subPickerOpenByCompId[l.competenciaId]);
-                        const selectedSubIds = new Set(Object.keys(l.subWeights || {}).filter(Boolean));
+                        const crit = allCriterios.find(c => c.id === l.criteriaId);
                         return (
-                          <div key={l.competenciaId} className="border border-gray-200 rounded-lg p-3 bg-white">
+                          <div key={l.criteriaId} className="border border-gray-200 rounded-lg p-3 bg-white">
                             <div className="flex items-start justify-between gap-3">
                               <div className="min-w-0">
                                 <p className="text-sm font-semibold text-gray-900">
-                                  {(c ? `${c.code}: ${c.name}` : l.competenciaId)}
+                                  {crit ? `${crit.id}: ${crit.criterio}` : l.criteriaId}
                                 </p>
-                                {c?.description ? (
-                                  <p className="text-xs text-gray-600 mt-0.5 line-clamp-2">{c.description}</p>
+                                {crit ? (
+                                  <p className="text-xs text-gray-600 mt-0.5">DO: {crit.descriptores.join(', ')}</p>
                                 ) : null}
                               </div>
                               <button
                                 type="button"
                                 className="text-sm text-gray-600 hover:text-gray-900 underline"
-                                onClick={() => removeCompetencia(l.competenciaId)}
+                                onClick={() => removeCriterio(l.criteriaId)}
                               >
                                 Quitar
                               </button>
                             </div>
 
-                            <div className="mt-3 grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
-                              <div className="md:col-span-7">
-                                <div className="flex items-center justify-between gap-2">
-                                  <label className="block text-xs font-medium text-gray-700">Subcompetencias (opcional)</label>
-                                  {subs.length > 0 ? (
-                                    <button
-                                      type="button"
-                                      className="btn-secondary"
-                                      onClick={() =>
-                                        setSubPickerOpenByCompId((prev) => ({
-                                          ...prev,
-                                          [l.competenciaId]: !Boolean(prev[l.competenciaId]),
-                                        }))
-                                      }
-                                    >
-                                      {subPickerOpen ? 'Ocultar' : 'Seleccionar'}
-                                    </button>
-                                  ) : null}
-                                </div>
-
-                                {subs.length === 0 ? (
-                                  <p className="text-xs text-gray-600 mt-1">Esta competencia no tiene subcompetencias.</p>
-                                ) : subPickerOpen ? (
-                                  <>
-                                    <div className="mt-2 flex flex-wrap gap-2">
-                                      <button
-                                        type="button"
-                                        className={selectedSubIds.size === 0 ? 'btn-primary' : 'btn-secondary'}
-                                        onClick={() => clearSubs(l.competenciaId)}
-                                        title="Aplicar a toda la competencia"
-                                      >
-                                        Todas
-                                      </button>
-                                      {subs.map((s) => {
-                                        const selected = selectedSubIds.has(s.id);
-                                        return (
-                                          <button
-                                            key={s.id}
-                                            type="button"
-                                            className={selected ? 'btn-primary' : 'btn-secondary'}
-                                            onClick={() => {
-                                              toggleSub(l.competenciaId, s.id);
-                                            }}
-                                            title={s.name}
-                                          >
-                                            {s.code || s.name}
-                                          </button>
-                                        );
-                                      })}
-                                    </div>
-
-                                    <p className="text-xs text-gray-600 mt-2">
-                                      {selectedSubIds.size === 0
-                                        ? 'Aplicando a toda la competencia.'
-                                        : `Aplicando a ${selectedSubIds.size} subcompetencia(s).`}
-                                    </p>
-
-                                    {selectedSubIds.size > 0 ? (
-                                      <div className="mt-3 space-y-2">
-                                        {subs
-                                          .filter((s) => selectedSubIds.has(s.id))
-                                          .map((s) => {
-                                            const k = weightKey(l.competenciaId, s.id);
-                                            const wNum = (l.subWeights || {})[s.id] ?? 0;
-                                            const draft = weightDraftByKey[k] ?? (Number(wNum) === 0 ? '' : String(Math.round(Number(wNum))));
-                                            const note = briefSubNote(s);
-                                            return (
-                                              <div key={s.id} className="border border-gray-100 rounded-lg p-2">
-                                                <div className="flex items-start justify-between gap-2">
-                                                  <div className="min-w-0">
-                                                    <p className="text-xs font-semibold text-gray-900">
-                                                      {(s.code ? s.code + ': ' : '') + s.name}
-                                                    </p>
-                                                    {note ? <p className="text-[11px] text-gray-600 mt-0.5">{note}</p> : null}
-                                                  </div>
-                                                  <div className="w-24 shrink-0">
-                                                    <input
-                                                      className="input-field"
-                                                      type="text"
-                                                      inputMode="numeric"
-                                                      value={draft}
-                                                      onFocus={(e) => e.currentTarget.select()}
-                                                      onChange={(e) => {
-                                                        const raw = e.target.value;
-                                                        if (raw === '') {
-                                                          setWeightDraftByKey((prev) => ({ ...prev, [k]: '' }));
-                                                          upsertSubWeight(l.competenciaId, s.id, 0);
-                                                          return;
-                                                        }
-                                                        const digits = raw.replace(/[^0-9]/g, '');
-                                                        setWeightDraftByKey((prev) => ({ ...prev, [k]: digits }));
-                                                        const n = Number(digits);
-                                                        if (!Number.isFinite(n)) return;
-                                                        upsertSubWeight(l.competenciaId, s.id, n);
-                                                      }}
-                                                      onBlur={() => {
-                                                        const raw = (weightDraftByKey[k] ?? '').trim();
-                                                        if (raw === '') return;
-                                                        const n = Number(raw);
-                                                        if (!Number.isFinite(n)) return;
-                                                        const clamped = clampPct(n);
-                                                        setWeightDraftByKey((prev) => ({ ...prev, [k]: String(clamped) }));
-                                                        upsertSubWeight(l.competenciaId, s.id, clamped);
-                                                      }}
-                                                      placeholder="%"
-                                                    />
-                                                  </div>
-                                                </div>
-                                              </div>
-                                            );
-                                          })}
-                                      </div>
-                                    ) : null}
-                                  </>
-                                ) : (
-                                  <p className="text-xs text-gray-600 mt-1">
-                                    {selectedSubIds.size === 0
-                                      ? 'Aplicando a toda la competencia.'
-                                      : `${selectedSubIds.size} subcompetencia(s) seleccionada(s).`}
-                                  </p>
-                                )}
-                              </div>
-
-                              <div className="md:col-span-5">
-                                {selectedSubIds.size > 0 ? (
-                                  <div>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Peso (por subcompetencia)</label>
-                                    <p className="text-[11px] text-gray-600">Introduce un % por cada subcompetencia seleccionada.</p>
-                                  </div>
-                                ) : (
-                                  <>
-                                    <label className="block text-xs font-medium text-gray-700 mb-1">Peso (%)</label>
-                                    <input
-                                      className="input-field"
-                                      type="text"
-                                      inputMode="numeric"
-                                      value={
-                                        weightDraftByKey[weightKey(l.competenciaId)] ??
-                                        (Number(l.weightAll || 0) === 0 ? '' : String(Math.round(Number(l.weightAll || 0))))
-                                      }
-                                      onFocus={(e) => e.currentTarget.select()}
-                                      onChange={(e) => {
-                                        const raw = e.target.value;
-                                        if (raw === '') {
-                                          setWeightDraftByKey((prev) => ({ ...prev, [weightKey(l.competenciaId)]: '' }));
-                                          upsertCompetenciaDraft(l.competenciaId, { weightAll: 0 });
-                                          return;
-                                        }
-
-                                        const digits = raw.replace(/[^0-9]/g, '');
-                                        setWeightDraftByKey((prev) => ({ ...prev, [weightKey(l.competenciaId)]: digits }));
-                                        const n = Number(digits);
-                                        if (!Number.isFinite(n)) return;
-                                        upsertCompetenciaDraft(l.competenciaId, { weightAll: clampPct(n) });
-                                      }}
-                                      onBlur={() => {
-                                        const raw = (weightDraftByKey[weightKey(l.competenciaId)] ?? '').trim();
-                                        if (raw === '') return;
-                                        const n = Number(raw);
-                                        if (!Number.isFinite(n)) return;
-                                        const clamped = clampPct(n);
-                                        setWeightDraftByKey((prev) => ({ ...prev, [weightKey(l.competenciaId)]: String(clamped) }));
-                                        upsertCompetenciaDraft(l.competenciaId, { weightAll: clamped });
-                                      }}
-                                      placeholder="%"
-                                    />
-                                  </>
-                                )}
-                              </div>
+                            <div className="mt-3">
+                              <label className="block text-xs font-medium text-gray-700 mb-1">Peso (%)</label>
+                              <input
+                                className="input-field"
+                                type="text"
+                                inputMode="numeric"
+                                value={weightDraftByKey[l.criteriaId] ?? (l.weight === 0 ? '' : String(Math.round(l.weight)))}
+                                onFocus={(e) => e.currentTarget.select()}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  if (raw === '') {
+                                    setWeightDraftByKey((prev) => ({ ...prev, [l.criteriaId]: '' }));
+                                    upsertCriterioDraft(l.criteriaId, 0);
+                                    return;
+                                  }
+                                  const digits = raw.replace(/[^0-9]/g, '');
+                                  setWeightDraftByKey((prev) => ({ ...prev, [l.criteriaId]: digits }));
+                                  const n = Number(digits);
+                                  if (!Number.isFinite(n)) return;
+                                  upsertCriterioDraft(l.criteriaId, n);
+                                }}
+                                onBlur={() => {
+                                  const raw = (weightDraftByKey[l.criteriaId] ?? '').trim();
+                                  if (raw === '') return;
+                                  const n = Number(raw);
+                                  if (!Number.isFinite(n)) return;
+                                  const clamped = clampPct(n);
+                                  setWeightDraftByKey((prev) => ({ ...prev, [l.criteriaId]: String(clamped) }));
+                                  upsertCriterioDraft(l.criteriaId, clamped);
+                                }}
+                                placeholder="%"
+                              />
                             </div>
                           </div>
                         );

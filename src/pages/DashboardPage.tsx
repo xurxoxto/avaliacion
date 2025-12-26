@@ -1,6 +1,6 @@
 import { useMemo, useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Plus, Users, BarChart3, ListTree, BookOpen, Search, X, Save } from 'lucide-react';
+import { Plus, Users, BarChart3, ListTree, BookOpen, Search, X, Save, Settings } from 'lucide-react';
 import { Teacher, Classroom, Student, LearningSituation, LearningTask, TaskEvaluation, EvidenceNote, CriterionEvaluation } from '../types';
 import type { Competencia, GradeKey } from '../types';
 import { storage } from '../utils/storage';
@@ -56,6 +56,7 @@ export default function DashboardPage({ teacher, onLogout }: DashboardPageProps)
     return normalizeWorkspaceSettings(local || DEFAULT_WORKSPACE_SETTINGS);
   });
   const [settingsSaving, setSettingsSaving] = useState(false);
+  const [settingsPanelOpen, setSettingsPanelOpen] = useState(false);
 
   const alertsSyncSigRef = useRef<string>('');
 
@@ -978,9 +979,15 @@ export default function DashboardPage({ teacher, onLogout }: DashboardPageProps)
         <div className="mb-6">
           <div className="border border-gray-200 rounded-lg bg-white p-4">
             <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-              <div>
+              <div className="flex items-center gap-3">
                 <p className="text-sm font-semibold text-gray-900">Mapa de actividad</p>
-                <p className="text-xs text-gray-600">Cuenta todo: tareas evaluadas + evidencias rápidas.</p>
+                <button
+                  onClick={() => setSettingsPanelOpen(!settingsPanelOpen)}
+                  className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded"
+                  title="Configuración del workspace"
+                >
+                  <Settings className="w-4 h-4" />
+                </button>
               </div>
               <div className="flex flex-wrap items-center gap-3 text-xs text-gray-600">
                 <span className="inline-flex items-center gap-2">
@@ -1126,129 +1133,131 @@ export default function DashboardPage({ teacher, onLogout }: DashboardPageProps)
           </div>
         </div>
 
-        <div className="mb-6">
-          <div className="border border-gray-200 rounded-lg bg-white p-4">
-            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-              <div>
-                <p className="text-sm font-semibold text-gray-900">Configuración</p>
-                <p className="text-xs text-gray-600">Pesos evolutivos y umbrales de alertas (workspace).</p>
+        {settingsPanelOpen && (
+          <div className="mb-6">
+            <div className="border border-gray-200 rounded-lg bg-white p-4">
+              <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900">Configuración</p>
+                  <p className="text-xs text-gray-600">Pesos evolutivos y umbrales de alertas (workspace).</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => setSettingsDraft(workspaceSettings)}
+                    disabled={settingsSaving}
+                  >
+                    Revertir
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={saveWorkspaceSettingsDraft}
+                    disabled={!teacher.workspaceId || settingsSaving}
+                  >
+                    {settingsSaving ? 'Guardando…' : 'Guardar'}
+                  </button>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  onClick={() => setSettingsDraft(workspaceSettings)}
-                  disabled={settingsSaving}
-                >
-                  Revertir
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={saveWorkspaceSettingsDraft}
-                  disabled={!teacher.workspaceId || settingsSaving}
-                >
-                  {settingsSaving ? 'Guardando…' : 'Guardar'}
-                </button>
-              </div>
-            </div>
 
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-              <div>
-                <p className="text-xs font-medium text-gray-700">Pesos evolutivos</p>
-                <div className="mt-2 grid grid-cols-2 gap-2">
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div>
+                  <p className="text-xs font-medium text-gray-700">Pesos evolutivos</p>
+                  <div className="mt-2 grid grid-cols-2 gap-2">
+                    <label className="text-xs text-gray-600">
+                      5º (w5)
+                      <input
+                        className="mt-1 input-field"
+                        value={String(settingsDraft.evolutiveWeights.w5)}
+                        onChange={(e) =>
+                          setSettingsDraft((prev) => ({
+                            ...prev,
+                            evolutiveWeights: { ...prev.evolutiveWeights, w5: Number(e.target.value) },
+                          }))
+                        }
+                        inputMode="decimal"
+                        disabled={settingsSaving}
+                      />
+                    </label>
+                    <label className="text-xs text-gray-600">
+                      6º (w6)
+                      <input
+                        className="mt-1 input-field"
+                        value={String(settingsDraft.evolutiveWeights.w6)}
+                        onChange={(e) =>
+                          setSettingsDraft((prev) => ({
+                            ...prev,
+                            evolutiveWeights: { ...prev.evolutiveWeights, w6: Number(e.target.value) },
+                          }))
+                        }
+                        inputMode="decimal"
+                        disabled={settingsSaving}
+                      />
+                    </label>
+                  </div>
+                  <p className="mt-2 text-[11px] text-gray-600">
+                    Se normaliza automáticamente (w5+w6).
+                  </p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium text-gray-700">Umbral crítico</p>
                   <label className="text-xs text-gray-600">
-                    5º (w5)
+                    Rendimiento (CRÍTICA)
                     <input
                       className="mt-1 input-field"
-                      value={String(settingsDraft.evolutiveWeights.w5)}
+                      value={String(settingsDraft.alerts.performanceThreshold)}
                       onChange={(e) =>
                         setSettingsDraft((prev) => ({
                           ...prev,
-                          evolutiveWeights: { ...prev.evolutiveWeights, w5: Number(e.target.value) },
+                          alerts: { ...prev.alerts, performanceThreshold: Number(e.target.value) },
                         }))
                       }
                       inputMode="decimal"
                       disabled={settingsSaving}
                     />
                   </label>
+                  <p className="mt-2 text-[11px] text-gray-600">Por debajo de este valor (1–4) marca alerta crítica.</p>
+                </div>
+
+                <div>
+                  <p className="text-xs font-medium text-gray-700">Desviación e inactividad</p>
                   <label className="text-xs text-gray-600">
-                    6º (w6)
+                    Desviación (DESVIACIÓN)
                     <input
                       className="mt-1 input-field"
-                      value={String(settingsDraft.evolutiveWeights.w6)}
+                      value={String(settingsDraft.alerts.deviationThreshold)}
                       onChange={(e) =>
                         setSettingsDraft((prev) => ({
                           ...prev,
-                          evolutiveWeights: { ...prev.evolutiveWeights, w6: Number(e.target.value) },
+                          alerts: { ...prev.alerts, deviationThreshold: Number(e.target.value) },
                         }))
                       }
                       inputMode="decimal"
+                      disabled={settingsSaving}
+                    />
+                  </label>
+                  <label className="mt-2 block text-xs text-gray-600">
+                    Días sin evidencias (INACTIVIDAD)
+                    <input
+                      className="mt-1 input-field"
+                      value={String(settingsDraft.alerts.inactivityDaysCritical)}
+                      onChange={(e) =>
+                        setSettingsDraft((prev) => ({
+                          ...prev,
+                          alerts: { ...prev.alerts, inactivityDaysCritical: Number(e.target.value) },
+                        }))
+                      }
+                      inputMode="numeric"
                       disabled={settingsSaving}
                     />
                   </label>
                 </div>
-                <p className="mt-2 text-[11px] text-gray-600">
-                  Se normaliza automáticamente (w5+w6).
-                </p>
-              </div>
-
-              <div>
-                <p className="text-xs font-medium text-gray-700">Umbral crítico</p>
-                <label className="text-xs text-gray-600">
-                  Rendimiento (CRÍTICA)
-                  <input
-                    className="mt-1 input-field"
-                    value={String(settingsDraft.alerts.performanceThreshold)}
-                    onChange={(e) =>
-                      setSettingsDraft((prev) => ({
-                        ...prev,
-                        alerts: { ...prev.alerts, performanceThreshold: Number(e.target.value) },
-                      }))
-                    }
-                    inputMode="decimal"
-                    disabled={settingsSaving}
-                  />
-                </label>
-                <p className="mt-2 text-[11px] text-gray-600">Por debajo de este valor (1–4) marca alerta crítica.</p>
-              </div>
-
-              <div>
-                <p className="text-xs font-medium text-gray-700">Desviación e inactividad</p>
-                <label className="text-xs text-gray-600">
-                  Desviación (DESVIACIÓN)
-                  <input
-                    className="mt-1 input-field"
-                    value={String(settingsDraft.alerts.deviationThreshold)}
-                    onChange={(e) =>
-                      setSettingsDraft((prev) => ({
-                        ...prev,
-                        alerts: { ...prev.alerts, deviationThreshold: Number(e.target.value) },
-                      }))
-                    }
-                    inputMode="decimal"
-                    disabled={settingsSaving}
-                  />
-                </label>
-                <label className="mt-2 block text-xs text-gray-600">
-                  Días sin evidencias (INACTIVIDAD)
-                  <input
-                    className="mt-1 input-field"
-                    value={String(settingsDraft.alerts.inactivityDaysCritical)}
-                    onChange={(e) =>
-                      setSettingsDraft((prev) => ({
-                        ...prev,
-                        alerts: { ...prev.alerts, inactivityDaysCritical: Number(e.target.value) },
-                      }))
-                    }
-                    inputMode="numeric"
-                    disabled={settingsSaving}
-                  />
-                </label>
               </div>
             </div>
           </div>
-        </div>
+        )}
 
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
           <div>
