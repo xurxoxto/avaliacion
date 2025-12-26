@@ -1,12 +1,13 @@
 import { useMemo, useRef, useState, useEffect, lazy, Suspense } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import { ArrowLeft, Save, Trash2, X, Plus } from 'lucide-react';
-import { Teacher, Student, Classroom, EvidenceNote, CriterionEvaluation } from '../types';
+import { Teacher, Student, Classroom, EvidenceNote, CriterionEvaluation, TaskEvaluation, SituationEvaluation, LearningSituation } from '../types';
 import { storage } from '../utils/storage';
 import Header from '../components/Header';
 import Breadcrumbs from '../components/Breadcrumbs';
 import TrafficButton from '../components/TrafficButton';
 import CreateStudentModal from '../components/CreateStudentModal';
+import AIReportGenerator from '../components/AIReportGenerator';
 import { useCompetencyCalculator } from '../hooks/useCompetencyCalculator';
 import { listenCompetencias, seedCompetenciasIfEmpty } from '../utils/firestore/competencias';
 import { listenStudents, deleteStudent, updateStudent } from '../utils/firestore/students';
@@ -23,6 +24,9 @@ import { deleteTaskEvaluationsForStudent } from '../lib/firestore/services/taskE
 import type { Criterion } from '../logic/criteria/types';
 import { buildCriteriaIndex, listenCriteria } from '../lib/firestore/services/criteriaService';
 import { addCriterionEvaluation, listenAllCriterionEvaluations, listenCriterionEvaluationsForStudent } from '../lib/firestore/services/criterionEvaluationsService';
+import { listenTaskEvaluationsForStudent } from '../lib/firestore/services/taskEvaluationsService';
+import { listenEvaluationsForStudent } from '../lib/firestore/services/evaluationsService';
+import { listenLearningSituations } from '../lib/firestore/services/learningSituationsService';
 import { computeDoScoresEvolutive } from '../logic/do/doCalculator';
 import {
   DEFAULT_WORKSPACE_SETTINGS,
@@ -147,6 +151,11 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
   const [criterionEvaluations, setCriterionEvaluations] = useState<CriterionEvaluation[]>([]);
   const [allCriterionEvaluations, setAllCriterionEvaluations] = useState<CriterionEvaluation[]>([]);
 
+  // Estados para el generador de informes con IA
+  const [taskEvaluations, setTaskEvaluations] = useState<TaskEvaluation[]>([]);
+  const [situationEvaluations, setSituationEvaluations] = useState<SituationEvaluation[]>([]);
+  const [learningSituations, setLearningSituations] = useState<LearningSituation[]>([]);
+
   const [workspaceSettings, setWorkspaceSettings] = useState<WorkspaceSettings>(() => {
     const local = storage.getWorkspaceSettings<WorkspaceSettings>();
     return normalizeWorkspaceSettings(local || DEFAULT_WORKSPACE_SETTINGS);
@@ -220,6 +229,25 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
   useEffect(() => {
     if (!teacher.workspaceId) return;
     const unsub = listenAllCriterionEvaluations(teacher.workspaceId, (items) => setAllCriterionEvaluations(items));
+    return () => unsub();
+  }, [teacher.workspaceId]);
+
+  // Listeners para el generador de informes con IA
+  useEffect(() => {
+    if (!teacher.workspaceId || !id) return;
+    const unsub = listenTaskEvaluationsForStudent(teacher.workspaceId, id, (items) => setTaskEvaluations(items));
+    return () => unsub();
+  }, [teacher.workspaceId, id]);
+
+  useEffect(() => {
+    if (!teacher.workspaceId || !id) return;
+    const unsub = listenEvaluationsForStudent(teacher.workspaceId, id, (items) => setSituationEvaluations(items));
+    return () => unsub();
+  }, [teacher.workspaceId, id]);
+
+  useEffect(() => {
+    if (!teacher.workspaceId) return;
+    const unsub = listenLearningSituations(teacher.workspaceId, (items) => setLearningSituations(items));
     return () => unsub();
   }, [teacher.workspaceId]);
 
@@ -1268,6 +1296,25 @@ export default function StudentPage({ teacher, onLogout }: StudentPageProps) {
           </div>
         </div>
       </main>
+
+      {/* Generador de informes con IA */}
+      {student && (
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+          <AIReportGenerator
+            studentData={{
+              student,
+              taskEvaluations,
+              situationEvaluations,
+              criterionEvaluations,
+              evidenceNotes,
+              learningSituations,
+              learningTasks: [], // TODO: Implementar cuando tengamos la función para obtener todas las tareas
+              competencias,
+            }}
+            student={student}
+          />
+        </div>
+      )}
 
       {showEditStudentModal && student ? (
         <CreateStudentModal
